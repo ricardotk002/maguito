@@ -1,0 +1,20 @@
+[package]
+name = "maguito"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "maguito"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+git2 = "0.19"
+anyhow = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
