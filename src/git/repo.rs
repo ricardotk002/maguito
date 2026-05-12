@@ -1,19 +1,88 @@
 use anyhow::{Context, Result};
-use git2::{Repository, Status, StatusOptions};
+use git2::{Delta, Repository, Status, StatusOptions};
+use std::path::Path;
+use std::rc::Rc;
+use std::cell::RefCell;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum SectionKind {
+    Untracked,
+    Staged,
+    Unstaged,
+}
+
+#[derive(Debug, Clone)]
+pub enum ChangeKind {
+    Untracked,
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+}
+
+impl ChangeKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ChangeKind::Untracked => "",
+            ChangeKind::Added     => "new file",
+            ChangeKind::Modified  => "modified",
+            ChangeKind::Deleted   => "deleted",
+            ChangeKind::Renamed   => "renamed",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FileEntry {
+    pub path: String,
+    pub kind: ChangeKind,
+    pub hunks: Vec<Hunk>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Hunk {
+    pub header: String,
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+    pub lines: Vec<HunkLine>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HunkLine {
+    pub origin: char,
+    pub content: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommitInfo {
+    pub sha: String,
+    pub message: String,
+}
+
 pub struct RepoStatus {
     pub branch: String,
-    pub untracked: Vec<String>,
-    pub unstaged: Vec<String>,
-    pub staged: Vec<String>,
+    pub sections: Vec<(SectionKind, Vec<FileEntry>)>,
+    pub commits: Vec<CommitInfo>,
+}
+
+#[derive(Debug)]
+enum DiffEvent {
+    File { path: String, kind: ChangeKind },
+    Hunk { header: String, old_start: u32, old_lines: u32, new_start: u32, new_lines: u32 },
+    Line { origin: char, content: String },
 }
 
 pub fn load() -> Result<RepoStatus> {
     let repo = Repository::discover(".").context("not a git repository")?;
-    let mut status = RepoStatus::default();
+    let mut result = RepoStatus {
+        branch: String::new(),
+        sections: Vec::new(),
+        commits: Vec::new(),
+    };
 
-    status.branch = match repo.head() {
+    result.branch = match repo.head() {
         Ok(head) => head.shorthand().unwrap_or("HEAD").to_string(),
         Err(_) => "(no commits yet)".to_string(),
     };
@@ -22,25 +91,200 @@ pub fn load() -> Result<RepoStatus> {
     opts.include_untracked(true).recurse_untracked_dirs(true);
     let statuses = repo.statuses(Some(&mut opts))?;
 
-    for entry in statuses.iter() {
-        let path = entry.path().unwrap_or("").to_string();
-        let s = entry.status();
+    let untracked: Vec<FileEntry> = statuses
+        .iter()
+        .filter(|e| e.status().contains(Status::WT_NEW))
+        .map(|e| FileEntry {
+            path: e.path().unwrap_or("").to_string(),
+            kind: ChangeKind::Untracked,
+            hunks: vec![],
+        })
+        .collect();
+    if !untracked.is_empty() {
+        result.sections.push((SectionKind::Untracked, untracked));
+    }
 
-        if s.intersects(
-            Status::INDEX_NEW
-                | Status::INDEX_MODIFIED
-                | Status::INDEX_DELETED
-                | Status::INDEX_RENAMED,
-        ) {
-            status.staged.push(path.clone());
+    // Staged before unstaged
+    let staged = collect_diff_files(&repo, true)?;
+    if !staged.is_empty() {
+        result.sections.push((SectionKind::Staged, staged));
+    }
+
+    let unstaged = collect_diff_files(&repo, false)?;
+    if !unstaged.is_empty() {
+        result.sections.push((SectionKind::Unstaged, unstaged));
+    }
+
+    result.commits = load_recent_commits(&repo, 10).unwrap_or_default();
+
+    Ok(result)
+}
+
+fn collect_diff_files(repo: &Repository, staged: bool) -> Result<Vec<FileEntry>> {
+    let diff = if staged {
+        match repo.head() {
+            Ok(head) => {
+                let tree = head.peel_to_tree()?;
+                repo.diff_tree_to_index(Some(&tree), None, None)?
+            }
+            Err(_) => repo.diff_tree_to_index(None, None, None)?,
         }
-        if s.intersects(Status::WT_MODIFIED | Status::WT_DELETED) {
-            status.unstaged.push(path.clone());
-        }
-        if s.contains(Status::WT_NEW) {
-            status.untracked.push(path);
+    } else {
+        repo.diff_index_to_workdir(None, None)?
+    };
+
+    let events: Rc<RefCell<Vec<DiffEvent>>> = Rc::new(RefCell::new(Vec::new()));
+
+    {
+        let ev = Rc::clone(&events);
+        let mut file_cb = move |delta: git2::DiffDelta<'_>, _: f32| -> bool {
+            let path = delta.new_file().path()
+                .or_else(|| delta.old_file().path())
+                .and_then(|p| p.to_str())
+                .unwrap_or("")
+                .to_string();
+            let kind = match delta.status() {
+                Delta::Added    => ChangeKind::Added,
+                Delta::Deleted  => ChangeKind::Deleted,
+                Delta::Renamed  => ChangeKind::Renamed,
+                _               => ChangeKind::Modified,
+            };
+            ev.borrow_mut().push(DiffEvent::File { path, kind });
+            true
+        };
+
+        let ev = Rc::clone(&events);
+        let mut hunk_cb = move |_: git2::DiffDelta<'_>, hunk: git2::DiffHunk<'_>| -> bool {
+            let header = std::str::from_utf8(hunk.header()).unwrap_or("").trim_end().to_string();
+            ev.borrow_mut().push(DiffEvent::Hunk {
+                header,
+                old_start: hunk.old_start(),
+                old_lines: hunk.old_lines(),
+                new_start: hunk.new_start(),
+                new_lines: hunk.new_lines(),
+            });
+            true
+        };
+
+        let ev = Rc::clone(&events);
+        let mut line_cb = move |_: git2::DiffDelta<'_>, _: Option<git2::DiffHunk<'_>>, line: git2::DiffLine<'_>| -> bool {
+            let origin = line.origin();
+            if matches!(origin, '+' | '-' | ' ') {
+                let content = std::str::from_utf8(line.content()).unwrap_or("").trim_end().to_string();
+                ev.borrow_mut().push(DiffEvent::Line { origin, content });
+            }
+            true
+        };
+
+        diff.foreach(&mut file_cb, None, Some(&mut hunk_cb), Some(&mut line_cb))?;
+    }
+
+    let mut files: Vec<FileEntry> = Vec::new();
+    for event in Rc::try_unwrap(events).unwrap().into_inner() {
+        match event {
+            DiffEvent::File { path, kind } => files.push(FileEntry { path, kind, hunks: vec![] }),
+            DiffEvent::Hunk { header, old_start, old_lines, new_start, new_lines } => {
+                if let Some(f) = files.last_mut() {
+                    f.hunks.push(Hunk { header, old_start, old_lines, new_start, new_lines, lines: vec![] });
+                }
+            }
+            DiffEvent::Line { origin, content } => {
+                if let Some(f) = files.last_mut() {
+                    if let Some(h) = f.hunks.last_mut() {
+                        h.lines.push(HunkLine { origin, content });
+                    }
+                }
+            }
         }
     }
 
-    Ok(status)
+    Ok(files)
+}
+
+fn load_recent_commits(repo: &Repository, count: usize) -> Result<Vec<CommitInfo>> {
+    let mut revwalk = repo.revwalk()?;
+    revwalk.push_head()?;
+    let mut commits = Vec::new();
+    for oid in revwalk.take(count) {
+        let oid = oid?;
+        let commit = repo.find_commit(oid)?;
+        commits.push(CommitInfo {
+            sha: format!("{:.7}", oid),
+            message: commit.summary().unwrap_or("").to_string(),
+        });
+    }
+    Ok(commits)
+}
+
+pub fn stage_file(path: &str) -> Result<()> {
+    let repo = Repository::discover(".")?;
+    let mut index = repo.index()?;
+    index.add_path(Path::new(path))?;
+    index.write()?;
+    Ok(())
+}
+
+pub fn unstage_file(path: &str) -> Result<()> {
+    let repo = Repository::discover(".")?;
+    match repo.head() {
+        Ok(head) => {
+            let commit = head.peel_to_commit()?;
+            repo.reset_default(Some(commit.as_object()), std::iter::once(path))?;
+        }
+        Err(_) => {
+            let mut index = repo.index()?;
+            index.remove_path(Path::new(path))?;
+            index.write()?;
+        }
+    }
+    Ok(())
+}
+
+pub fn stage_hunk(file_path: &str, hunk: &Hunk) -> Result<()> {
+    run_git_apply(&build_patch(file_path, hunk), false)
+}
+
+pub fn unstage_hunk(file_path: &str, hunk: &Hunk) -> Result<()> {
+    run_git_apply(&build_patch(file_path, hunk), true)
+}
+
+fn build_patch(file_path: &str, hunk: &Hunk) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("diff --git a/{file_path} b/{file_path}\n"));
+    s.push_str(&format!("--- a/{file_path}\n"));
+    s.push_str(&format!("+++ b/{file_path}\n"));
+    s.push_str(&hunk.header);
+    s.push('\n');
+    for line in &hunk.lines {
+        s.push(line.origin);
+        s.push_str(&line.content);
+        s.push('\n');
+    }
+    s
+}
+
+fn run_git_apply(patch: &str, reverse: bool) -> Result<()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut args = vec!["apply", "--cached"];
+    if reverse { args.push("--reverse"); }
+    args.push("-");
+
+    let mut child = Command::new("git")
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("failed to run git apply")?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(patch.as_bytes())?;
+    }
+
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        anyhow::bail!("git apply failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(())
 }
