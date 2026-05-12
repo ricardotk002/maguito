@@ -18,10 +18,10 @@ Run from any git repository:
 maguito
 ```
 
-Or bind it in `~/.tmux.conf`:
+Or bind it in `~/.tmux.conf` as a popup (press `Esc` or `q` to close):
 
 ```
-bind-key g split-window -h -c "#{pane_current_path}" "maguito"
+bind-key g display-popup -E -d "#{pane_current_path}" -w 90% -h 90% "maguito"
 ```
 
 ## Keys
@@ -34,4 +34,4 @@ bind-key g split-window -h -c "#{pane_current_path}" "maguito"
 | `u`       | Unstage file or hunk under cursor         |
 | `c c`     | Commit staged changes                     |
 | `g`       | Refresh                                   |
-| `q`       | Quit                                      |
+| `q` / `Esc` | Quit                                    |

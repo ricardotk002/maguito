@@ -21,7 +21,7 @@ pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
     }
 
     Ok(match (key.modifiers, key.code) {
-        (_, KeyCode::Char('q')) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => KeyAction::Quit,
+        (_, KeyCode::Char('q')) | (_, KeyCode::Esc) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => KeyAction::Quit,
         (_, KeyCode::Char('j')) | (_, KeyCode::Down) => { app.move_down(); KeyAction::Continue }
         (_, KeyCode::Char('k')) | (_, KeyCode::Up)   => { app.move_up();   KeyAction::Continue }
         (_, KeyCode::Tab)                             => { app.toggle_collapse(); KeyAction::Continue }
