@@ -2,20 +2,49 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::App;
+use crate::transient::Transient;
 
 pub enum KeyAction {
     Continue,
     Quit,
-    OpenCommitEditor,
+    CommitCreate,
+    CommitAmend,
+    CommitReword,
+    CommitExtend,
 }
 
 pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
     app.message = None;
 
-    // Resolve pending prefix first
-    if let Some(prefix) = app.pending_prefix.take() {
-        return Ok(match (prefix, key.code) {
-            ('c', KeyCode::Char('c')) => KeyAction::OpenCommitEditor,
+    if app.show_help {
+        app.show_help = false;
+        return Ok(KeyAction::Continue);
+    }
+
+    if app.transient.is_some() {
+        let awaiting = app.transient.as_ref().unwrap().awaiting_flag;
+
+        if awaiting {
+            app.transient.as_mut().unwrap().awaiting_flag = false;
+            if let KeyCode::Char(c) = key.code {
+                app.transient.as_mut().unwrap().toggle_flag(c);
+            }
+            return Ok(KeyAction::Continue);
+        }
+
+        return Ok(match key.code {
+            KeyCode::Char('-') => {
+                app.transient.as_mut().unwrap().awaiting_flag = true;
+                KeyAction::Continue
+            }
+            KeyCode::Char('c') => KeyAction::CommitCreate,
+            KeyCode::Char('a') => KeyAction::CommitAmend,
+            KeyCode::Char('w') => KeyAction::CommitReword,
+            KeyCode::Char('e') => KeyAction::CommitExtend,
+            KeyCode::Char('q') | KeyCode::Esc => {
+                app.transient = None;
+                KeyAction::Continue
+            }
             _ => KeyAction::Continue,
         });
     }
@@ -28,7 +57,8 @@ pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
         (_, KeyCode::Char('s'))                       => { app.stage_current()?;   KeyAction::Continue }
         (_, KeyCode::Char('u'))                       => { app.unstage_current()?; KeyAction::Continue }
         (_, KeyCode::Char('g'))                       => { app.refresh()?; KeyAction::Continue }
-        (_, KeyCode::Char('c'))                       => { app.pending_prefix = Some('c'); KeyAction::Continue }
+        (_, KeyCode::Char('c'))                       => { app.transient = Some(Transient::commit()); KeyAction::Continue }
+        (_, KeyCode::Char('?'))                       => { app.show_help = true; KeyAction::Continue }
         _                                             => KeyAction::Continue,
     })
 }

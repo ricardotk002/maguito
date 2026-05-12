@@ -35,3 +35,4 @@ bind-key g display-popup -E -d "#{pane_current_path}" -w 90% -h 90% "maguito"
 | `c c`     | Commit staged changes                     |
 | `g`       | Refresh                                   |
 | `q` / `Esc` | Quit                                    |
+| `?`         | Show help                               |

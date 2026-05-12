@@ -8,6 +8,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 
 use crate::git::repo::{self, CommitInfo, FileEntry, SectionKind};
+use crate::transient::Transient;
 
 pub struct App {
     pub branch: String,
@@ -15,8 +16,9 @@ pub struct App {
     pub commits: Vec<CommitInfo>,
     pub commits_collapsed: bool,
     pub cursor: usize,
-    pub pending_prefix: Option<char>,
+    pub transient: Option<Transient>,
     pub message: Option<String>,
+    pub show_help: bool,
 }
 
 pub struct Section {
@@ -66,8 +68,9 @@ impl App {
             commits: status.commits,
             commits_collapsed: false,
             cursor: 0,
-            pending_prefix: None,
+            transient: None,
             message: None,
+            show_help: false,
         }
     }
 
@@ -213,34 +216,71 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
 
     let mut app = App::new()?;
     loop {
-        terminal.draw(|f| crate::ui::status::render(f, &app))?;
+        terminal.draw(|f| {
+            crate::ui::status::render(f, &app);
+            if app.transient.is_some() {
+                crate::ui::transient::render(f, &app);
+            }
+        })?;
+
         if event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 match crate::keys::handle(&mut app, key)? {
                     KeyAction::Quit => break,
-                    KeyAction::OpenCommitEditor => {
-                        let has_staged = app.sections.iter()
-                            .any(|s| s.kind == SectionKind::Staged);
+
+                    KeyAction::CommitCreate => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        let has_staged = app.sections.iter().any(|s| s.kind == SectionKind::Staged)
+                            || flags.contains(&"--all");
                         if !has_staged {
-                            app.message = Some("Nothing staged (or unstaged)".into());
+                            app.message = Some("Nothing staged (use -a to stage all)".into());
                         } else {
-                            disable_raw_mode()?;
-                            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-
-                            let result = open_commit_editor();
-
-                            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-                            enable_raw_mode()?;
-                            terminal.clear()?;
-
+                            leave_tui(terminal)?;
+                            let result = open_commit_editor(None);
+                            enter_tui(terminal)?;
                             match result {
-                                Ok(Some(msg)) => repo::commit(&msg)?,
+                                Ok(Some(msg)) => repo::commit(&msg, &flags)?,
                                 Ok(None) => {}
                                 Err(e) => return Err(e),
                             }
                             app.refresh()?;
                         }
                     }
+
+                    KeyAction::CommitAmend => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        let prefill = repo::head_message().ok();
+                        leave_tui(terminal)?;
+                        let result = open_commit_editor(prefill.as_deref());
+                        enter_tui(terminal)?;
+                        match result {
+                            Ok(Some(msg)) => repo::amend(&msg, &flags)?,
+                            Ok(None) => {}
+                            Err(e) => return Err(e),
+                        }
+                        app.refresh()?;
+                    }
+
+                    KeyAction::CommitReword => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        let prefill = repo::head_message().ok();
+                        leave_tui(terminal)?;
+                        let result = open_commit_editor(prefill.as_deref());
+                        enter_tui(terminal)?;
+                        match result {
+                            Ok(Some(msg)) => repo::reword(&msg, &flags)?,
+                            Ok(None) => {}
+                            Err(e) => return Err(e),
+                        }
+                        app.refresh()?;
+                    }
+
+                    KeyAction::CommitExtend => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        repo::extend(&flags)?;
+                        app.refresh()?;
+                    }
+
                     KeyAction::Continue => {}
                 }
             }
@@ -249,13 +289,30 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
     Ok(())
 }
 
-fn open_commit_editor() -> Result<Option<String>> {
+fn leave_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    Ok(())
+}
+
+fn enter_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+    enable_raw_mode()?;
+    terminal.clear()?;
+    Ok(())
+}
+
+fn open_commit_editor(prefill: Option<&str>) -> Result<Option<String>> {
     use std::io::Write;
 
     let tmp = std::env::temp_dir().join("maguito_COMMIT_EDITMSG");
     {
         let mut f = std::fs::File::create(&tmp)?;
-        writeln!(f)?;
+        if let Some(msg) = prefill {
+            writeln!(f, "{msg}")?;
+        } else {
+            writeln!(f)?;
+        }
         writeln!(f, "# Please enter the commit message for your changes.")?;
         writeln!(f, "# Lines starting with '#' will be ignored.")?;
         writeln!(f, "# An empty message aborts the commit.")?;

@@ -1,9 +1,9 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{List, ListItem, ListState, Paragraph},
+    widgets::{Clear, List, ListItem, ListState, Paragraph},
 };
 
 use crate::app::{App, CursorItem};
@@ -127,4 +127,44 @@ pub fn render(frame: &mut Frame, app: &App) {
             .style(Style::default().fg(Color::White));
         frame.render_widget(footer, chunks[1]);
     }
+
+    if app.show_help {
+        let area = bottom_rect(frame.area());
+        frame.render_widget(Clear, area);
+
+        let section = |s: &'static str| {
+            Line::from(Span::styled(s, Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)))
+        };
+        let row = |k: &'static str, desc: &'static str| {
+            let pad = " ".repeat(8_usize.saturating_sub(k.len()));
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled(k, Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(pad),
+                Span::raw(desc),
+            ])
+        };
+
+        let lines = vec![
+            section("Transient and dwim commands"),
+            row("c", "Commit"),
+            Line::from(""),
+            section("Applying changes"),
+            row("s", "Stage"),
+            row("u", "Unstage"),
+            Line::from(""),
+            section("Essential commands"),
+            row("g", "Refresh current buffer"),
+            row("q", "Bury current buffer"),
+            row("<tab>", "Toggle section at point"),
+        ];
+
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+}
+
+fn bottom_rect(r: Rect) -> Rect {
+    const HEIGHT: u16 = 12;
+    let y = r.height.saturating_sub(HEIGHT);
+    Rect { x: r.x, y: r.y + y, width: r.width, height: HEIGHT.min(r.height) }
 }

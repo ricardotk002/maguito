@@ -220,19 +220,99 @@ fn load_recent_commits(repo: &Repository, count: usize) -> Result<Vec<CommitInfo
     Ok(commits)
 }
 
-pub fn commit(message: &str) -> Result<()> {
-    commit_from(Path::new("."), message)
+pub fn head_message() -> Result<String> {
+    let repo = Repository::discover(".")?;
+    let head = repo.head()?.peel_to_commit()?;
+    Ok(head.message().unwrap_or("").trim().to_string())
 }
 
-pub fn commit_from(repo_path: &Path, message: &str) -> Result<()> {
+pub fn commit(message: &str, flags: &[&str]) -> Result<()> {
+    commit_from(Path::new("."), message, flags)
+}
+
+pub fn commit_from(repo_path: &Path, message: &str, flags: &[&str]) -> Result<()> {
     let repo = Repository::discover(repo_path)?;
     let sig = repo.signature().context("git user.name/email not configured")?;
     let mut index = repo.index()?;
+    if flags.contains(&"--all") {
+        stage_all_modified(&repo, &mut index)?;
+    }
     let tree_id = index.write_tree()?;
     let tree = repo.find_tree(tree_id)?;
     let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
     let parents: Vec<&git2::Commit> = parent.iter().collect();
-    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)?;
+    let msg = apply_message_flags(message, &sig, flags);
+    repo.commit(Some("HEAD"), &sig, &sig, &msg, &tree, &parents)?;
+    Ok(())
+}
+
+pub fn amend(message: &str, flags: &[&str]) -> Result<()> {
+    let repo = Repository::discover(".")?;
+    let sig = repo.signature()?;
+    let head = repo.head()?.peel_to_commit()?;
+    let mut index = repo.index()?;
+    if flags.contains(&"--all") {
+        stage_all_modified(&repo, &mut index)?;
+    }
+    let tree_id = index.write_tree()?;
+    let tree = repo.find_tree(tree_id)?;
+    let msg = apply_message_flags(message, &sig, flags);
+    head.amend(Some("HEAD"), Some(&sig), Some(&sig), None, Some(&msg), Some(&tree))?;
+    Ok(())
+}
+
+pub fn reword(message: &str, flags: &[&str]) -> Result<()> {
+    let repo = Repository::discover(".")?;
+    let sig = repo.signature()?;
+    let head = repo.head()?.peel_to_commit()?;
+    let msg = apply_message_flags(message, &sig, flags);
+    head.amend(Some("HEAD"), Some(&sig), Some(&sig), None, Some(&msg), None)?;
+    Ok(())
+}
+
+pub fn extend(flags: &[&str]) -> Result<()> {
+    let repo = Repository::discover(".")?;
+    let sig = repo.signature()?;
+    let head = repo.head()?.peel_to_commit()?;
+    let existing_msg = head.message().unwrap_or("").to_string();
+    let mut index = repo.index()?;
+    if flags.contains(&"--all") {
+        stage_all_modified(&repo, &mut index)?;
+    }
+    let tree_id = index.write_tree()?;
+    let tree = repo.find_tree(tree_id)?;
+    head.amend(Some("HEAD"), Some(&sig), Some(&sig), None, Some(&existing_msg), Some(&tree))?;
+    Ok(())
+}
+
+fn apply_message_flags(message: &str, sig: &git2::Signature, flags: &[&str]) -> String {
+    if flags.contains(&"--signoff") {
+        format!(
+            "{}\n\nSigned-off-by: {} <{}>",
+            message.trim(),
+            sig.name().unwrap_or(""),
+            sig.email().unwrap_or(""),
+        )
+    } else {
+        message.to_string()
+    }
+}
+
+fn stage_all_modified(repo: &Repository, index: &mut git2::Index) -> Result<()> {
+    let statuses = repo.statuses(None)?;
+    for s in statuses.iter() {
+        let st = s.status();
+        if st.intersects(Status::WT_MODIFIED | Status::WT_DELETED | Status::WT_RENAMED | Status::WT_TYPECHANGE) {
+            if let Some(path) = s.path() {
+                if st.contains(Status::WT_DELETED) {
+                    let _ = index.remove_path(Path::new(path));
+                } else {
+                    let _ = index.add_path(Path::new(path));
+                }
+            }
+        }
+    }
+    index.write()?;
     Ok(())
 }
 
