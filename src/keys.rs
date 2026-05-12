@@ -10,6 +10,8 @@ pub enum KeyAction {
 }
 
 pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
+    app.message = None;
+
     // Resolve pending prefix first
     if let Some(prefix) = app.pending_prefix.take() {
         return Ok(match (prefix, key.code) {

@@ -1,8 +1,9 @@
 use ratatui::{
     Frame,
+    layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{List, ListItem, ListState},
+    widgets::{List, ListItem, ListState, Paragraph},
 };
 
 use crate::app::{App, CursorItem};
@@ -11,6 +12,12 @@ use crate::git::repo::SectionKind;
 const KIND_WIDTH: usize = 10; // "new file  " — widest label + padding
 
 pub fn render(frame: &mut Frame, app: &App) {
+    let footer_height = if app.message.is_some() { 1 } else { 0 };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(footer_height)])
+        .split(frame.area());
+
     let cursor_items = app.visible_items();
     let mut list_items: Vec<ListItem> = Vec::new();
     let mut cursor_map: Vec<usize> = Vec::new();
@@ -63,21 +70,24 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
 
             CursorItem::Hunk(si, fi, hi) => {
-                let hunk = &app.sections[*si].files[*fi].entry.hunks[*hi];
+                let file = &app.sections[*si].files[*fi];
+                let hunk = &file.entry.hunks[*hi];
                 list_items.push(ListItem::new(Line::from(Span::styled(
                     hunk.header.clone(),
                     Style::default().fg(Color::Cyan),
                 ))));
-                for dl in &hunk.lines {
-                    let (color, prefix) = match dl.origin {
-                        '+' => (Color::Green, "+"),
-                        '-' => (Color::Red,   "-"),
-                        _   => (Color::DarkGray, " "),
-                    };
-                    list_items.push(ListItem::new(Line::from(Span::styled(
-                        format!("{prefix}{}", dl.content),
-                        Style::default().fg(color),
-                    ))));
+                if !file.hunk_collapsed[*hi] {
+                    for dl in &hunk.lines {
+                        let (color, prefix) = match dl.origin {
+                            '+' => (Color::Green, "+"),
+                            '-' => (Color::Red,   "-"),
+                            _   => (Color::Reset, " "),
+                        };
+                        list_items.push(ListItem::new(Line::from(Span::styled(
+                            format!("{prefix}{}", dl.content),
+                            Style::default().fg(color),
+                        ))));
+                    }
                 }
             }
 
@@ -108,7 +118,13 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     let list = List::new(list_items)
-        .highlight_style(Style::default().bg(Color::DarkGray));
+        .highlight_style(Style::default().bg(Color::Rgb(48, 48, 56)));
 
-    frame.render_stateful_widget(list, frame.area(), &mut state);
+    frame.render_stateful_widget(list, chunks[0], &mut state);
+
+    if let Some(msg) = &app.message {
+        let footer = Paragraph::new(msg.as_str())
+            .style(Style::default().fg(Color::White));
+        frame.render_widget(footer, chunks[1]);
+    }
 }

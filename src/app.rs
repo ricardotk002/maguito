@@ -16,6 +16,7 @@ pub struct App {
     pub commits_collapsed: bool,
     pub cursor: usize,
     pub pending_prefix: Option<char>,
+    pub message: Option<String>,
 }
 
 pub struct Section {
@@ -27,6 +28,7 @@ pub struct Section {
 pub struct FileNode {
     pub entry: FileEntry,
     pub collapsed: bool,
+    pub hunk_collapsed: Vec<bool>,
 }
 
 #[derive(Clone)]
@@ -52,7 +54,10 @@ impl App {
                 kind,
                 collapsed: false,
                 // diffs hidden by default — Tab to expand
-                files: files.into_iter().map(|e| FileNode { entry: e, collapsed: true }).collect(),
+                files: files.into_iter().map(|e| {
+                    let n = e.hunks.len();
+                    FileNode { entry: e, collapsed: true, hunk_collapsed: vec![false; n] }
+                }).collect(),
             })
             .collect();
         Self {
@@ -62,6 +67,7 @@ impl App {
             commits_collapsed: false,
             cursor: 0,
             pending_prefix: None,
+            message: None,
         }
     }
 
@@ -127,6 +133,10 @@ impl App {
             }
             Some(CursorItem::File(si, fi)) => {
                 self.sections[si].files[fi].collapsed = !self.sections[si].files[fi].collapsed;
+            }
+            Some(CursorItem::Hunk(si, fi, hi)) => {
+                let c = &mut self.sections[si].files[fi].hunk_collapsed[hi];
+                *c = !*c;
             }
             Some(CursorItem::CommitHeader) => {
                 self.commits_collapsed = !self.commits_collapsed;
@@ -209,21 +219,27 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 match crate::keys::handle(&mut app, key)? {
                     KeyAction::Quit => break,
                     KeyAction::OpenCommitEditor => {
-                        disable_raw_mode()?;
-                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                        let has_staged = app.sections.iter()
+                            .any(|s| s.kind == SectionKind::Staged);
+                        if !has_staged {
+                            app.message = Some("Nothing staged (or unstaged)".into());
+                        } else {
+                            disable_raw_mode()?;
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-                        let result = open_commit_editor();
+                            let result = open_commit_editor();
 
-                        execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-                        enable_raw_mode()?;
-                        terminal.clear()?;
+                            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                            enable_raw_mode()?;
+                            terminal.clear()?;
 
-                        match result {
-                            Ok(Some(msg)) => repo::commit(&msg)?,
-                            Ok(None) => {} // empty message / editor closed without saving
-                            Err(e) => return Err(e),
+                            match result {
+                                Ok(Some(msg)) => repo::commit(&msg)?,
+                                Ok(None) => {}
+                                Err(e) => return Err(e),
+                            }
+                            app.refresh()?;
                         }
-                        app.refresh()?;
                     }
                     KeyAction::Continue => {}
                 }
@@ -328,8 +344,25 @@ mod tests {
         app.cursor = 1; // on the file
         app.toggle_collapse();
         let items = app.visible_items();
+        // Section + File + 2 Hunks visible immediately (hunks open by default)
         assert!(matches!(items[2], CursorItem::Hunk(0, 0, 0)));
         assert!(matches!(items[3], CursorItem::Hunk(0, 0, 1)));
+    }
+
+    #[test]
+    fn collapse_hunk_hides_its_lines_in_renderer() {
+        let mut app = make_app(vec![(SectionKind::Staged, vec![make_file("a.rs", 2)])]);
+        // expand the file
+        app.cursor = 1;
+        app.toggle_collapse();
+        // both hunks are expanded by default
+        assert!(!app.sections[0].files[0].hunk_collapsed[0]);
+        assert!(!app.sections[0].files[0].hunk_collapsed[1]);
+        // collapse hunk 0
+        app.cursor = 2; // on Hunk(0,0,0)
+        app.toggle_collapse();
+        assert!(app.sections[0].files[0].hunk_collapsed[0]);
+        assert!(!app.sections[0].files[0].hunk_collapsed[1]);
     }
 
     #[test]
