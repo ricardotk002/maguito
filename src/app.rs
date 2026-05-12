@@ -1,5 +1,9 @@
-use anyhow::Result;
-use crossterm::event::{self, Event};
+use anyhow::{Context, Result};
+use crossterm::{
+    event::{self, Event},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 
@@ -11,6 +15,7 @@ pub struct App {
     pub commits: Vec<CommitInfo>,
     pub commits_collapsed: bool,
     pub cursor: usize,
+    pub pending_prefix: Option<char>,
 }
 
 pub struct Section {
@@ -56,6 +61,7 @@ impl App {
             commits: status.commits,
             commits_collapsed: false,
             cursor: 0,
+            pending_prefix: None,
         }
     }
 
@@ -193,18 +199,71 @@ impl App {
 }
 
 pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    use crate::keys::KeyAction;
+
     let mut app = App::new()?;
     loop {
         terminal.draw(|f| crate::ui::status::render(f, &app))?;
         if event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
-                if crate::keys::handle(&mut app, key)? {
-                    break;
+                match crate::keys::handle(&mut app, key)? {
+                    KeyAction::Quit => break,
+                    KeyAction::OpenCommitEditor => {
+                        disable_raw_mode()?;
+                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+                        let result = open_commit_editor();
+
+                        execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                        enable_raw_mode()?;
+                        terminal.clear()?;
+
+                        match result {
+                            Ok(Some(msg)) => repo::commit(&msg)?,
+                            Ok(None) => {} // empty message / editor closed without saving
+                            Err(e) => return Err(e),
+                        }
+                        app.refresh()?;
+                    }
+                    KeyAction::Continue => {}
                 }
             }
         }
     }
     Ok(())
+}
+
+fn open_commit_editor() -> Result<Option<String>> {
+    use std::io::Write;
+
+    let tmp = std::env::temp_dir().join("maguito_COMMIT_EDITMSG");
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        writeln!(f)?;
+        writeln!(f, "# Please enter the commit message for your changes.")?;
+        writeln!(f, "# Lines starting with '#' will be ignored.")?;
+        writeln!(f, "# An empty message aborts the commit.")?;
+    }
+
+    let editor = std::env::var("GIT_EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".into());
+
+    std::process::Command::new(&editor)
+        .arg(&tmp)
+        .status()
+        .context("failed to open editor")?;
+
+    let content = std::fs::read_to_string(&tmp)?;
+    let message = content
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let message = message.trim().to_string();
+
+    Ok(if message.is_empty() { None } else { Some(message) })
 }
 
 #[cfg(test)]

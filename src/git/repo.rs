@@ -220,6 +220,22 @@ fn load_recent_commits(repo: &Repository, count: usize) -> Result<Vec<CommitInfo
     Ok(commits)
 }
 
+pub fn commit(message: &str) -> Result<()> {
+    commit_from(Path::new("."), message)
+}
+
+pub fn commit_from(repo_path: &Path, message: &str) -> Result<()> {
+    let repo = Repository::discover(repo_path)?;
+    let sig = repo.signature().context("git user.name/email not configured")?;
+    let mut index = repo.index()?;
+    let tree_id = index.write_tree()?;
+    let tree = repo.find_tree(tree_id)?;
+    let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+    let parents: Vec<&git2::Commit> = parent.iter().collect();
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)?;
+    Ok(())
+}
+
 pub fn stage_file(path: &str) -> Result<()> {
     let repo = Repository::discover(".")?;
     let mut index = repo.index()?;

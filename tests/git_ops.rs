@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use git2::{Repository, Signature};
 use tempfile::TempDir;
-use maguito::git::repo::{self, SectionKind};
+use maguito::git::repo::{self, SectionKind, ChangeKind};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -148,4 +148,56 @@ fn staged_section_appears_before_unstaged() {
     let staged_pos   = kinds.iter().position(|k| **k == SectionKind::Staged);
     let unstaged_pos = kinds.iter().position(|k| **k == SectionKind::Unstaged);
     assert!(staged_pos.unwrap() < unstaged_pos.unwrap());
+}
+
+// ── commit tests ─────────────────────────────────────────────────────────────
+
+#[test]
+fn commit_from_creates_commit_with_correct_message() {
+    let tr = TestRepo::new();
+    tr.write("file.txt", "hello\n");
+    tr.stage("file.txt");
+
+    repo::commit_from(&tr.path, "my commit message").unwrap();
+
+    let status = repo::load_from(&tr.path).unwrap();
+    assert_eq!(status.commits.len(), 1);
+    assert_eq!(status.commits[0].message, "my commit message");
+}
+
+#[test]
+fn commit_clears_staged_changes() {
+    let tr = TestRepo::new();
+    tr.write("file.txt", "hello\n");
+    tr.stage("file.txt");
+    repo::commit_from(&tr.path, "initial").unwrap();
+
+    tr.write("file.txt", "world\n");
+    tr.stage("file.txt");
+
+    // staged before commit
+    let before = repo::load_from(&tr.path).unwrap();
+    assert!(before.sections.iter().any(|(k, _)| *k == SectionKind::Staged));
+
+    repo::commit_from(&tr.path, "second").unwrap();
+
+    // nothing staged after commit
+    let after = repo::load_from(&tr.path).unwrap();
+    assert!(!after.sections.iter().any(|(k, _)| *k == SectionKind::Staged));
+}
+
+#[test]
+fn staged_new_file_has_added_change_kind() {
+    let tr = TestRepo::new();
+    tr.write("init.txt", "x");
+    tr.stage("init.txt");
+    tr.commit("initial");
+
+    tr.write("new.txt", "y");
+    tr.stage("new.txt");
+
+    let status = repo::load_from(&tr.path).unwrap();
+    let staged = status.sections.iter().find(|(k, _)| *k == SectionKind::Staged).unwrap();
+    let file = staged.1.iter().find(|f| f.path == "new.txt").unwrap();
+    assert!(matches!(file.kind, ChangeKind::Added));
 }
