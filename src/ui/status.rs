@@ -12,7 +12,9 @@ use crate::git::repo::SectionKind;
 const KIND_WIDTH: usize = 10; // "new file  " — widest label + padding
 
 pub fn render(frame: &mut Frame, app: &App) {
-    let footer_height = if app.message.is_some() { 1 } else { 0 };
+    let footer_text = app.confirm.as_ref().map(|c| c.prompt.as_str())
+        .or(app.message.as_deref());
+    let footer_height = if footer_text.is_some() { 1 } else { 0 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(footer_height)])
@@ -122,10 +124,11 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     frame.render_stateful_widget(list, chunks[0], &mut state);
 
-    if let Some(msg) = &app.message {
-        let footer = Paragraph::new(msg.as_str())
-            .style(Style::default().fg(Color::White));
-        frame.render_widget(footer, chunks[1]);
+    if let Some(text) = footer_text {
+        frame.render_widget(
+            Paragraph::new(text).style(Style::default().fg(Color::White)),
+            chunks[1],
+        );
     }
 
     if app.show_help {

@@ -11,10 +11,18 @@ pub enum KeyAction {
     CommitAmend,
     CommitReword,
     CommitExtend,
+    ConfirmYes,
 }
 
 pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
     app.message = None;
+
+    if app.confirm.is_some() {
+        return Ok(match key.code {
+            KeyCode::Char('y') => KeyAction::ConfirmYes,
+            _ => { app.confirm = None; KeyAction::Continue }
+        });
+    }
 
     if app.show_help {
         app.show_help = false;
@@ -57,6 +65,7 @@ pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
         (_, KeyCode::Char('s'))                       => { app.stage_current()?;   KeyAction::Continue }
         (_, KeyCode::Char('u'))                       => { app.unstage_current()?; KeyAction::Continue }
         (_, KeyCode::Char('g'))                       => { app.refresh()?; KeyAction::Continue }
+        (_, KeyCode::Char('x'))                       => { app.discard_current(); KeyAction::Continue }
         (_, KeyCode::Char('c'))                       => { app.transient = Some(Transient::commit()); KeyAction::Continue }
         (_, KeyCode::Char('?'))                       => { app.show_help = true; KeyAction::Continue }
         _                                             => KeyAction::Continue,

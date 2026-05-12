@@ -340,12 +340,47 @@ pub fn unstage_file(path: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn discard_file(path: &str, staged: bool) -> Result<()> {
+    let args: &[&str] = if staged {
+        &["checkout", "HEAD", "--", path]
+    } else {
+        &["checkout", "--", path]
+    };
+    let out = std::process::Command::new("git")
+        .args(args)
+        .output()
+        .context("failed to run git checkout")?;
+    if !out.status.success() {
+        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(())
+}
+
+pub fn trash_file(path: &str) -> Result<()> {
+    let p = std::path::Path::new(path);
+    if p.is_dir() {
+        std::fs::remove_dir_all(p)?;
+    } else {
+        std::fs::remove_file(p)?;
+    }
+    Ok(())
+}
+
 pub fn stage_hunk(file_path: &str, hunk: &Hunk) -> Result<()> {
     run_git_apply(&build_patch(file_path, hunk), false)
 }
 
 pub fn unstage_hunk(file_path: &str, hunk: &Hunk) -> Result<()> {
     run_git_apply(&build_patch(file_path, hunk), true)
+}
+
+pub fn discard_hunk(file_path: &str, hunk: &Hunk, staged: bool) -> Result<()> {
+    let patch = build_patch(file_path, hunk);
+    if staged {
+        run_git_apply(&patch, true)          // --cached --reverse: remove from index
+    } else {
+        run_git_apply_worktree(&patch, true) // --reverse: restore working tree
+    }
 }
 
 fn build_patch(file_path: &str, hunk: &Hunk) -> String {
@@ -364,10 +399,19 @@ fn build_patch(file_path: &str, hunk: &Hunk) -> String {
 }
 
 fn run_git_apply(patch: &str, reverse: bool) -> Result<()> {
+    git_apply(patch, &["--cached"], reverse)
+}
+
+fn run_git_apply_worktree(patch: &str, reverse: bool) -> Result<()> {
+    git_apply(patch, &[], reverse)
+}
+
+fn git_apply(patch: &str, extra: &[&str], reverse: bool) -> Result<()> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
-    let mut args = vec!["apply", "--cached"];
+    let mut args = vec!["apply"];
+    args.extend_from_slice(extra);
     if reverse { args.push("--reverse"); }
     args.push("-");
 

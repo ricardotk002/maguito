@@ -10,6 +10,20 @@ use std::io;
 use crate::git::repo::{self, CommitInfo, FileEntry, SectionKind};
 use crate::transient::Transient;
 
+pub enum ConfirmKind {
+    Discard,     // tracked file — checkout to discard changes
+    Trash,       // untracked file — delete from disk
+    DiscardHunk, // single hunk — reverse-apply
+}
+
+pub struct Confirm {
+    pub kind: ConfirmKind,
+    pub section: usize,
+    pub file: usize,
+    pub hunk: Option<usize>,
+    pub prompt: String,
+}
+
 pub struct App {
     pub branch: String,
     pub sections: Vec<Section>,
@@ -17,6 +31,7 @@ pub struct App {
     pub commits_collapsed: bool,
     pub cursor: usize,
     pub transient: Option<Transient>,
+    pub confirm: Option<Confirm>,
     pub message: Option<String>,
     pub show_help: bool,
 }
@@ -69,6 +84,7 @@ impl App {
             commits_collapsed: false,
             cursor: 0,
             transient: None,
+            confirm: None,
             message: None,
             show_help: false,
         }
@@ -76,7 +92,28 @@ impl App {
 
     pub fn refresh(&mut self) -> Result<()> {
         let status = repo::load()?;
-        let rebuilt = Self::from_status(status);
+        let mut rebuilt = Self::from_status(status);
+
+        // Carry over collapse state so expanded files/hunks stay open after refresh.
+        rebuilt.commits_collapsed = self.commits_collapsed;
+        for new_sec in &mut rebuilt.sections {
+            if let Some(old_sec) = self.sections.iter().find(|s| s.kind == new_sec.kind) {
+                new_sec.collapsed = old_sec.collapsed;
+                for new_file in &mut new_sec.files {
+                    if let Some(old_file) = old_sec.files.iter()
+                        .find(|f| f.entry.path == new_file.entry.path)
+                    {
+                        new_file.collapsed = old_file.collapsed;
+                        for (i, c) in new_file.hunk_collapsed.iter_mut().enumerate() {
+                            if let Some(&old_c) = old_file.hunk_collapsed.get(i) {
+                                *c = old_c;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         self.branch = rebuilt.branch;
         self.sections = rebuilt.sections;
         self.commits = rebuilt.commits;
@@ -146,6 +183,60 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    pub fn discard_current(&mut self) {
+        match self.current_item() {
+            Some(CursorItem::File(si, fi)) => {
+                let section = &self.sections[si];
+                let path = section.files[fi].entry.path.clone();
+                let (kind, prompt) = match section.kind {
+                    SectionKind::Untracked => (
+                        ConfirmKind::Trash,
+                        format!("Trash \"{}\"? (y or n)", path),
+                    ),
+                    _ => (
+                        ConfirmKind::Discard,
+                        format!("Discard unstaged changes in \"{}\"? (y or n)", path),
+                    ),
+                };
+                self.confirm = Some(Confirm { kind, section: si, file: fi, hunk: None, prompt });
+            }
+            Some(CursorItem::Hunk(si, fi, hi)) => {
+                let path = self.sections[si].files[fi].entry.path.clone();
+                self.confirm = Some(Confirm {
+                    kind: ConfirmKind::DiscardHunk,
+                    section: si,
+                    file: fi,
+                    hunk: Some(hi),
+                    prompt: format!("Discard hunk from \"{}\"? (y or n)", path),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    pub fn execute_confirm(&mut self) -> Result<()> {
+        if let Some(c) = self.confirm.take() {
+            let path = self.sections[c.section].files[c.file].entry.path.clone();
+            match c.kind {
+                ConfirmKind::Discard => {
+                    let staged = self.sections[c.section].kind == SectionKind::Staged;
+                    repo::discard_file(&path, staged)?;
+                }
+                ConfirmKind::Trash => {
+                    repo::trash_file(&path)?;
+                }
+                ConfirmKind::DiscardHunk => {
+                    let hi = c.hunk.unwrap();
+                    let hunk = self.sections[c.section].files[c.file].entry.hunks[hi].clone();
+                    let staged = self.sections[c.section].kind == SectionKind::Staged;
+                    repo::discard_hunk(&path, &hunk, staged)?;
+                }
+            }
+            self.refresh()?;
+        }
+        Ok(())
     }
 
     pub fn stage_current(&mut self) -> Result<()> {
@@ -281,6 +372,7 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         app.refresh()?;
                     }
 
+                    KeyAction::ConfirmYes => { app.execute_confirm()?; }
                     KeyAction::Continue => {}
                 }
             }
