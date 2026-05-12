@@ -75,7 +75,11 @@ enum DiffEvent {
 }
 
 pub fn load() -> Result<RepoStatus> {
-    let repo = Repository::discover(".").context("not a git repository")?;
+    load_from(Path::new("."))
+}
+
+pub fn load_from(path: &Path) -> Result<RepoStatus> {
+    let repo = Repository::discover(path).context("not a git repository")?;
     let mut result = RepoStatus {
         branch: String::new(),
         sections: Vec::new(),

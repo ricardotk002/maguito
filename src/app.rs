@@ -39,7 +39,7 @@ impl App {
         Ok(Self::from_status(status))
     }
 
-    fn from_status(status: repo::RepoStatus) -> Self {
+    pub fn from_status(status: repo::RepoStatus) -> Self {
         let sections = status
             .sections
             .into_iter()
@@ -205,4 +205,127 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git::repo::{ChangeKind, CommitInfo, FileEntry, Hunk, HunkLine, RepoStatus, SectionKind};
+
+    fn make_file(path: &str, hunks: usize) -> FileEntry {
+        FileEntry {
+            path: path.into(),
+            kind: ChangeKind::Modified,
+            hunks: (0..hunks)
+                .map(|i| Hunk {
+                    header: format!("@@ -{i},3 +{i},4 @@"),
+                    old_start: i as u32, old_lines: 3,
+                    new_start: i as u32, new_lines: 4,
+                    lines: vec![
+                        HunkLine { origin: ' ', content: "ctx".into() },
+                        HunkLine { origin: '+', content: "add".into() },
+                    ],
+                })
+                .collect(),
+        }
+    }
+
+    fn make_app(sections: Vec<(SectionKind, Vec<FileEntry>)>) -> App {
+        App::from_status(RepoStatus {
+            branch: "main".into(),
+            sections,
+            commits: vec![],
+        })
+    }
+
+    // --- visible_items ---
+
+    #[test]
+    fn empty_repo_has_no_items() {
+        let app = make_app(vec![]);
+        assert!(app.visible_items().is_empty());
+    }
+
+    #[test]
+    fn section_and_file_are_visible() {
+        let app = make_app(vec![(SectionKind::Staged, vec![make_file("a.rs", 0)])]);
+        let items = app.visible_items();
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0], CursorItem::Section(0)));
+        assert!(matches!(items[1], CursorItem::File(0, 0)));
+    }
+
+    #[test]
+    fn files_start_collapsed_so_hunks_hidden() {
+        let app = make_app(vec![(SectionKind::Staged, vec![make_file("a.rs", 3)])]);
+        let items = app.visible_items();
+        // hunks not visible while collapsed
+        assert!(!items.iter().any(|i| matches!(i, CursorItem::Hunk(..))));
+    }
+
+    #[test]
+    fn expand_file_reveals_hunks() {
+        let mut app = make_app(vec![(SectionKind::Staged, vec![make_file("a.rs", 2)])]);
+        app.cursor = 1; // on the file
+        app.toggle_collapse();
+        let items = app.visible_items();
+        assert!(matches!(items[2], CursorItem::Hunk(0, 0, 0)));
+        assert!(matches!(items[3], CursorItem::Hunk(0, 0, 1)));
+    }
+
+    #[test]
+    fn collapse_section_hides_all_files() {
+        let mut app = make_app(vec![(
+            SectionKind::Staged,
+            vec![make_file("a.rs", 0), make_file("b.rs", 0)],
+        )]);
+        app.cursor = 0; // on section header
+        app.toggle_collapse();
+        let items = app.visible_items();
+        assert_eq!(items.len(), 1); // only the section header
+    }
+
+    #[test]
+    fn commits_visible_when_present() {
+        let mut app = make_app(vec![]);
+        app.commits = vec![
+            CommitInfo { sha: "abc1234".into(), message: "first".into() },
+            CommitInfo { sha: "def5678".into(), message: "second".into() },
+        ];
+        let items = app.visible_items();
+        assert!(items.iter().any(|i| matches!(i, CursorItem::CommitHeader)));
+        assert_eq!(items.iter().filter(|i| matches!(i, CursorItem::Commit(_))).count(), 2);
+    }
+
+    #[test]
+    fn collapse_commits_hides_list() {
+        let mut app = make_app(vec![]);
+        app.commits = vec![CommitInfo { sha: "abc".into(), message: "msg".into() }];
+        app.cursor = 0; // CommitHeader
+        app.toggle_collapse();
+        assert!(!app.visible_items().iter().any(|i| matches!(i, CursorItem::Commit(_))));
+    }
+
+    // --- cursor movement ---
+
+    #[test]
+    fn move_down_advances_cursor() {
+        let mut app = make_app(vec![(SectionKind::Staged, vec![make_file("a.rs", 0)])]);
+        app.move_down();
+        assert_eq!(app.cursor, 1);
+    }
+
+    #[test]
+    fn cursor_does_not_go_below_last_item() {
+        let mut app = make_app(vec![(SectionKind::Staged, vec![make_file("a.rs", 0)])]);
+        for _ in 0..10 { app.move_down(); }
+        assert_eq!(app.cursor, 1); // last item is File(0,0)
+    }
+
+    #[test]
+    fn cursor_does_not_go_above_zero() {
+        let mut app = make_app(vec![(SectionKind::Staged, vec![make_file("a.rs", 0)])]);
+        app.move_up();
+        assert_eq!(app.cursor, 0);
+    }
 }
