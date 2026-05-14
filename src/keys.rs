@@ -4,6 +4,12 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::app::App;
 use crate::transient::Transient;
 
+fn attempt(app: &mut App, f: impl FnOnce(&mut App) -> Result<()>) {
+    if let Err(e) = f(app) {
+        app.message = Some(format!("{:#}", e));
+    }
+}
+
 pub enum KeyAction {
     Continue,
     Quit,
@@ -62,9 +68,9 @@ pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
         (_, KeyCode::Char('j')) | (_, KeyCode::Down) => { app.move_down(); KeyAction::Continue }
         (_, KeyCode::Char('k')) | (_, KeyCode::Up)   => { app.move_up();   KeyAction::Continue }
         (_, KeyCode::Tab)                             => { app.toggle_collapse(); KeyAction::Continue }
-        (_, KeyCode::Char('s'))                       => { app.stage_current()?;   KeyAction::Continue }
-        (_, KeyCode::Char('u'))                       => { app.unstage_current()?; KeyAction::Continue }
-        (_, KeyCode::Char('g'))                       => { app.refresh()?; KeyAction::Continue }
+        (_, KeyCode::Char('s')) => { attempt(app, |a| a.stage_current());   KeyAction::Continue }
+        (_, KeyCode::Char('u')) => { attempt(app, |a| a.unstage_current()); KeyAction::Continue }
+        (_, KeyCode::Char('g')) => { attempt(app, |a| a.refresh());         KeyAction::Continue }
         (_, KeyCode::Char('x'))                       => { app.discard_current(); KeyAction::Continue }
         (_, KeyCode::Char('c'))                       => { app.transient = Some(Transient::commit()); KeyAction::Continue }
         (_, KeyCode::Char('?'))                       => { app.show_help = true; KeyAction::Continue }

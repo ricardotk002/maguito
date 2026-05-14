@@ -74,6 +74,11 @@ enum DiffEvent {
     Line { origin: char, content: String },
 }
 
+pub fn check() -> Result<()> {
+    Repository::discover(".").context("not a git repository")?;
+    Ok(())
+}
+
 pub fn load() -> Result<RepoStatus> {
     load_from(Path::new("."))
 }
@@ -317,10 +322,13 @@ fn stage_all_modified(repo: &Repository, index: &mut git2::Index) -> Result<()> 
 }
 
 pub fn stage_file(path: &str) -> Result<()> {
-    let repo = Repository::discover(".")?;
-    let mut index = repo.index()?;
-    index.add_path(Path::new(path))?;
-    index.write()?;
+    let out = std::process::Command::new("git")
+        .args(["add", "--", path])
+        .output()
+        .context("failed to run git add")?;
+    if !out.status.success() {
+        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
+    }
     Ok(())
 }
 

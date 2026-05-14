@@ -372,7 +372,11 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         app.refresh()?;
                     }
 
-                    KeyAction::ConfirmYes => { app.execute_confirm()?; }
+                    KeyAction::ConfirmYes => {
+                        if let Err(e) = app.execute_confirm() {
+                            app.message = Some(format!("{:#}", e));
+                        }
+                    }
                     KeyAction::Continue => {}
                 }
             }
