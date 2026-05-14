@@ -97,7 +97,7 @@ pub fn load_from(path: &Path) -> Result<RepoStatus> {
     };
 
     let mut opts = StatusOptions::new();
-    opts.include_untracked(true).recurse_untracked_dirs(true);
+    opts.include_untracked(true).recurse_untracked_dirs(false);
     let statuses = repo.statuses(Some(&mut opts))?;
 
     let untracked: Vec<FileEntry> = statuses
