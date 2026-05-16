@@ -322,18 +322,17 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     KeyAction::CommitCreate => {
                         let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
                         let has_staged = app.sections.iter().any(|s| s.kind == SectionKind::Staged)
-                            || flags.contains(&"--all");
+                            || flags.contains(&"--all")
+                            || flags.contains(&"--allow-empty");
                         if !has_staged {
                             app.message = Some("Nothing staged (use -a to stage all)".into());
                         } else {
-                            leave_tui(terminal)?;
-                            let result = open_commit_editor(None);
-                            enter_tui(terminal)?;
-                            match result {
-                                Ok(Some(msg)) => repo::commit(&msg, &flags)?,
-                                Ok(None) => {}
-                                Err(e) => return Err(e),
-                            }
+                            if let Some(e) = suspend(terminal, || {
+                                if let Some(msg) = open_commit_editor(None)? {
+                                    repo::commit(&msg, &flags)?;
+                                }
+                                Ok(())
+                            })? { app.message = Some(format!("{:#}", e)); }
                             app.refresh()?;
                         }
                     }
@@ -341,34 +340,32 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     KeyAction::CommitAmend => {
                         let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
                         let prefill = repo::head_message().ok();
-                        leave_tui(terminal)?;
-                        let result = open_commit_editor(prefill.as_deref());
-                        enter_tui(terminal)?;
-                        match result {
-                            Ok(Some(msg)) => repo::amend(&msg, &flags)?,
-                            Ok(None) => {}
-                            Err(e) => return Err(e),
-                        }
+                        if let Some(e) = suspend(terminal, || {
+                            if let Some(msg) = open_commit_editor(prefill.as_deref())? {
+                                repo::amend(&msg, &flags)?;
+                            }
+                            Ok(())
+                        })? { app.message = Some(format!("{:#}", e)); }
                         app.refresh()?;
                     }
 
                     KeyAction::CommitReword => {
                         let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
                         let prefill = repo::head_message().ok();
-                        leave_tui(terminal)?;
-                        let result = open_commit_editor(prefill.as_deref());
-                        enter_tui(terminal)?;
-                        match result {
-                            Ok(Some(msg)) => repo::reword(&msg, &flags)?,
-                            Ok(None) => {}
-                            Err(e) => return Err(e),
-                        }
+                        if let Some(e) = suspend(terminal, || {
+                            if let Some(msg) = open_commit_editor(prefill.as_deref())? {
+                                repo::reword(&msg, &flags)?;
+                            }
+                            Ok(())
+                        })? { app.message = Some(format!("{:#}", e)); }
                         app.refresh()?;
                     }
 
                     KeyAction::CommitExtend => {
                         let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
-                        repo::extend(&flags)?;
+                        if let Some(e) = suspend(terminal, || repo::extend(&flags))? {
+                            app.message = Some(format!("{:#}", e));
+                        }
                         app.refresh()?;
                     }
 
@@ -383,9 +380,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         match repo::get_push_remote() {
                             Err(e) => app.message = Some(format!("{:#}", e)),
                             Ok(remote) => {
-                                leave_tui(terminal)?;
-                                repo::fetch(&remote, &flags).ok();
-                                enter_tui(terminal)?;
+                                if let Some(e) = suspend(terminal, || repo::fetch(&remote, &flags))? {
+                                    app.message = Some(format!("{:#}", e));
+                                }
                                 app.refresh()?;
                             }
                         }
@@ -396,9 +393,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         match repo::get_upstream() {
                             Err(e) => app.message = Some(format!("{:#}", e)),
                             Ok((remote, _)) => {
-                                leave_tui(terminal)?;
-                                repo::fetch(&remote, &flags).ok();
-                                enter_tui(terminal)?;
+                                if let Some(e) = suspend(terminal, || repo::fetch(&remote, &flags))? {
+                                    app.message = Some(format!("{:#}", e));
+                                }
                                 app.refresh()?;
                             }
                         }
@@ -406,9 +403,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
 
                     KeyAction::FetchAll => {
                         let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
-                        leave_tui(terminal)?;
-                        repo::fetch_all(&flags).ok();
-                        enter_tui(terminal)?;
+                        if let Some(e) = suspend(terminal, || repo::fetch_all(&flags))? {
+                            app.message = Some(format!("{:#}", e));
+                        }
                         app.refresh()?;
                     }
 
@@ -417,9 +414,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         match repo::get_push_remote() {
                             Err(e) => app.message = Some(format!("{:#}", e)),
                             Ok(remote) => {
-                                leave_tui(terminal)?;
-                                repo::push(&remote, &flags).ok();
-                                enter_tui(terminal)?;
+                                if let Some(e) = suspend(terminal, || repo::push(&remote, &flags))? {
+                                    app.message = Some(format!("{:#}", e));
+                                }
                                 app.refresh()?;
                             }
                         }
@@ -430,9 +427,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         match repo::get_upstream() {
                             Err(e) => app.message = Some(format!("{:#}", e)),
                             Ok((remote, branch)) => {
-                                leave_tui(terminal)?;
-                                repo::push_to_upstream(&remote, &branch, &flags).ok();
-                                enter_tui(terminal)?;
+                                if let Some(e) = suspend(terminal, || repo::push_to_upstream(&remote, &branch, &flags))? {
+                                    app.message = Some(format!("{:#}", e));
+                                }
                                 app.refresh()?;
                             }
                         }
@@ -443,9 +440,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         match repo::get_push_remote().and_then(|r| repo::current_branch().map(|b| (r, b))) {
                             Err(e) => app.message = Some(format!("{:#}", e)),
                             Ok((remote, branch)) => {
-                                leave_tui(terminal)?;
-                                repo::pull(&remote, &branch, &flags).ok();
-                                enter_tui(terminal)?;
+                                if let Some(e) = suspend(terminal, || repo::pull(&remote, &branch, &flags))? {
+                                    app.message = Some(format!("{:#}", e));
+                                }
                                 app.refresh()?;
                             }
                         }
@@ -456,9 +453,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         match repo::get_upstream() {
                             Err(e) => app.message = Some(format!("{:#}", e)),
                             Ok((remote, branch)) => {
-                                leave_tui(terminal)?;
-                                repo::pull(&remote, &branch, &flags).ok();
-                                enter_tui(terminal)?;
+                                if let Some(e) = suspend(terminal, || repo::pull(&remote, &branch, &flags))? {
+                                    app.message = Some(format!("{:#}", e));
+                                }
                                 app.refresh()?;
                             }
                         }
@@ -483,6 +480,15 @@ fn enter_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
     enable_raw_mode()?;
     terminal.clear()?;
     Ok(())
+}
+
+fn suspend<F>(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, f: F) -> Result<Option<anyhow::Error>>
+where F: FnOnce() -> Result<()>
+{
+    leave_tui(terminal)?;
+    let result = f();
+    enter_tui(terminal)?;
+    Ok(result.err())
 }
 
 fn open_commit_editor(prefill: Option<&str>) -> Result<Option<String>> {

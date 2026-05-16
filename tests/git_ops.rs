@@ -158,7 +158,7 @@ fn commit_from_creates_commit_with_correct_message() {
     tr.write("file.txt", "hello\n");
     tr.stage("file.txt");
 
-    repo::commit_from(&tr.path, "my commit message", &[]).unwrap();
+    repo::commit_from(&tr.path, "my commit message").unwrap();
 
     let status = repo::load_from(&tr.path).unwrap();
     assert_eq!(status.commits.len(), 1);
@@ -170,7 +170,7 @@ fn commit_clears_staged_changes() {
     let tr = TestRepo::new();
     tr.write("file.txt", "hello\n");
     tr.stage("file.txt");
-    repo::commit_from(&tr.path, "initial", &[]).unwrap();
+    repo::commit_from(&tr.path, "initial").unwrap();
 
     tr.write("file.txt", "world\n");
     tr.stage("file.txt");
@@ -179,7 +179,7 @@ fn commit_clears_staged_changes() {
     let before = repo::load_from(&tr.path).unwrap();
     assert!(before.sections.iter().any(|(k, _)| *k == SectionKind::Staged));
 
-    repo::commit_from(&tr.path, "second", &[]).unwrap();
+    repo::commit_from(&tr.path, "second").unwrap();
 
     // nothing staged after commit
     let after = repo::load_from(&tr.path).unwrap();

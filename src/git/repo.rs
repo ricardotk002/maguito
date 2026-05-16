@@ -122,38 +122,34 @@ pub fn get_upstream() -> Result<(String, String)> {
 }
 
 pub fn fetch(remote: &str, flags: &[&str]) -> Result<()> {
-    std::process::Command::new("git")
-        .arg("fetch").args(flags).arg(remote)
-        .status().context("failed to run git fetch")?;
-    Ok(())
+    run_git(&["fetch"], flags, &[remote])
 }
 
 pub fn fetch_all(flags: &[&str]) -> Result<()> {
-    std::process::Command::new("git")
-        .arg("fetch").args(flags).arg("--all")
-        .status().context("failed to run git fetch")?;
-    Ok(())
+    run_git(&["fetch", "--all"], flags, &[])
 }
 
 pub fn push(remote: &str, flags: &[&str]) -> Result<()> {
-    std::process::Command::new("git")
-        .arg("push").args(flags).arg(remote)
-        .status().context("failed to run git push")?;
-    Ok(())
+    run_git(&["push"], flags, &[remote, "HEAD"])
 }
 
 pub fn push_to_upstream(remote: &str, upstream_branch: &str, flags: &[&str]) -> Result<()> {
-    std::process::Command::new("git")
-        .arg("push").args(flags).arg(remote)
-        .arg(format!("HEAD:{upstream_branch}"))
-        .status().context("failed to run git push")?;
-    Ok(())
+    let refspec = format!("HEAD:{upstream_branch}");
+    run_git(&["push"], flags, &[remote, &refspec])
 }
 
 pub fn pull(remote: &str, branch: &str, flags: &[&str]) -> Result<()> {
-    std::process::Command::new("git")
-        .arg("pull").args(flags).arg(remote).arg(branch)
-        .status().context("failed to run git pull")?;
+    run_git(&["pull"], flags, &[remote, branch])
+}
+
+fn run_git(base: &[&str], flags: &[&str], args: &[&str]) -> Result<()> {
+    let status = std::process::Command::new("git")
+        .args(base).args(flags).args(args)
+        .status()
+        .context(format!("failed to run git {}", base[0]))?;
+    if !status.success() {
+        anyhow::bail!("git {} failed", base[0]);
+    }
     Ok(())
 }
 
@@ -310,92 +306,50 @@ pub fn head_message() -> Result<String> {
 }
 
 pub fn commit(message: &str, flags: &[&str]) -> Result<()> {
-    commit_from(Path::new("."), message, flags)
+    let tmp = write_msg_file(message)?;
+    run_git_with_file(&["commit"], flags, &tmp)
 }
 
-pub fn commit_from(repo_path: &Path, message: &str, flags: &[&str]) -> Result<()> {
+pub fn amend(message: &str, flags: &[&str]) -> Result<()> {
+    let tmp = write_msg_file(message)?;
+    run_git_with_file(&["commit", "--amend"], flags, &tmp)
+}
+
+pub fn reword(message: &str, flags: &[&str]) -> Result<()> {
+    let tmp = write_msg_file(message)?;
+    run_git_with_file(&["commit", "--amend", "--only"], flags, &tmp)
+}
+
+pub fn extend(flags: &[&str]) -> Result<()> {
+    run_git(&["commit", "--amend", "--no-edit"], flags, &[])
+}
+
+fn write_msg_file(message: &str) -> Result<std::path::PathBuf> {
+    let path = std::env::temp_dir().join("maguito_commit_msg");
+    std::fs::write(&path, message).context("failed to write commit message")?;
+    Ok(path)
+}
+
+fn run_git_with_file(base: &[&str], flags: &[&str], file: &std::path::Path) -> Result<()> {
+    let status = std::process::Command::new("git")
+        .args(base).args(flags).arg("-F").arg(file)
+        .status()
+        .context(format!("failed to run git {}", base[0]))?;
+    if !status.success() {
+        anyhow::bail!("git {} failed", base[0]);
+    }
+    Ok(())
+}
+
+pub fn commit_from(repo_path: &Path, message: &str) -> Result<()> {
     let repo = Repository::discover(repo_path)?;
     let sig = repo.signature().context("git user.name/email not configured")?;
     let mut index = repo.index()?;
-    if flags.contains(&"--all") {
-        stage_all_modified(&repo, &mut index)?;
-    }
     let tree_id = index.write_tree()?;
     let tree = repo.find_tree(tree_id)?;
     let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
     let parents: Vec<&git2::Commit> = parent.iter().collect();
-    let msg = apply_message_flags(message, &sig, flags);
-    repo.commit(Some("HEAD"), &sig, &sig, &msg, &tree, &parents)?;
-    Ok(())
-}
-
-pub fn amend(message: &str, flags: &[&str]) -> Result<()> {
-    let repo = Repository::discover(".")?;
-    let sig = repo.signature()?;
-    let head = repo.head()?.peel_to_commit()?;
-    let mut index = repo.index()?;
-    if flags.contains(&"--all") {
-        stage_all_modified(&repo, &mut index)?;
-    }
-    let tree_id = index.write_tree()?;
-    let tree = repo.find_tree(tree_id)?;
-    let msg = apply_message_flags(message, &sig, flags);
-    head.amend(Some("HEAD"), Some(&sig), Some(&sig), None, Some(&msg), Some(&tree))?;
-    Ok(())
-}
-
-pub fn reword(message: &str, flags: &[&str]) -> Result<()> {
-    let repo = Repository::discover(".")?;
-    let sig = repo.signature()?;
-    let head = repo.head()?.peel_to_commit()?;
-    let msg = apply_message_flags(message, &sig, flags);
-    head.amend(Some("HEAD"), Some(&sig), Some(&sig), None, Some(&msg), None)?;
-    Ok(())
-}
-
-pub fn extend(flags: &[&str]) -> Result<()> {
-    let repo = Repository::discover(".")?;
-    let sig = repo.signature()?;
-    let head = repo.head()?.peel_to_commit()?;
-    let existing_msg = head.message().unwrap_or("").to_string();
-    let mut index = repo.index()?;
-    if flags.contains(&"--all") {
-        stage_all_modified(&repo, &mut index)?;
-    }
-    let tree_id = index.write_tree()?;
-    let tree = repo.find_tree(tree_id)?;
-    head.amend(Some("HEAD"), Some(&sig), Some(&sig), None, Some(&existing_msg), Some(&tree))?;
-    Ok(())
-}
-
-fn apply_message_flags(message: &str, sig: &git2::Signature, flags: &[&str]) -> String {
-    if flags.contains(&"--signoff") {
-        format!(
-            "{}\n\nSigned-off-by: {} <{}>",
-            message.trim(),
-            sig.name().unwrap_or(""),
-            sig.email().unwrap_or(""),
-        )
-    } else {
-        message.to_string()
-    }
-}
-
-fn stage_all_modified(repo: &Repository, index: &mut git2::Index) -> Result<()> {
-    let statuses = repo.statuses(None)?;
-    for s in statuses.iter() {
-        let st = s.status();
-        if st.intersects(Status::WT_MODIFIED | Status::WT_DELETED | Status::WT_RENAMED | Status::WT_TYPECHANGE) {
-            if let Some(path) = s.path() {
-                if st.contains(Status::WT_DELETED) {
-                    let _ = index.remove_path(Path::new(path));
-                } else {
-                    let _ = index.add_path(Path::new(path));
-                }
-            }
-        }
-    }
-    index.write()?;
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)?;
     Ok(())
 }
 
@@ -412,17 +366,13 @@ pub fn stage_file(path: &str) -> Result<()> {
 }
 
 pub fn unstage_file(path: &str) -> Result<()> {
-    let repo = Repository::discover(".")?;
-    match repo.head() {
-        Ok(head) => {
-            let commit = head.peel_to_commit()?;
-            repo.reset_default(Some(commit.as_object()), std::iter::once(path))?;
-        }
-        Err(_) => {
-            let mut index = repo.index()?;
-            index.remove_path(Path::new(path))?;
-            index.write()?;
-        }
+    let out = std::process::Command::new("git")
+        .current_dir(workdir()?)
+        .args(["restore", "--staged", "--", path])
+        .output()
+        .context("failed to run git restore")?;
+    if !out.status.success() {
+        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
     }
     Ok(())
 }
