@@ -121,36 +121,52 @@ pub fn get_upstream() -> Result<(String, String)> {
     Ok((remote, upstream_branch))
 }
 
-pub fn fetch(remote: &str, flags: &[&str]) -> Result<()> {
-    run_git(&["fetch"], flags, &[remote])
+pub fn fetch(remote: &str, flags: &[&str]) -> Result<String> {
+    git_output(&["fetch"], flags, &[remote])
 }
 
-pub fn fetch_all(flags: &[&str]) -> Result<()> {
-    run_git(&["fetch", "--all"], flags, &[])
+pub fn fetch_all(flags: &[&str]) -> Result<String> {
+    git_output(&["fetch", "--all"], flags, &[])
 }
 
-pub fn push(remote: &str, flags: &[&str]) -> Result<()> {
-    run_git(&["push"], flags, &[remote, "HEAD"])
+pub fn push(remote: &str, flags: &[&str]) -> Result<String> {
+    git_output(&["push"], flags, &[remote, "HEAD"])
 }
 
-pub fn push_to_upstream(remote: &str, upstream_branch: &str, flags: &[&str]) -> Result<()> {
+pub fn push_to_upstream(remote: &str, upstream_branch: &str, flags: &[&str]) -> Result<String> {
     let refspec = format!("HEAD:{upstream_branch}");
-    run_git(&["push"], flags, &[remote, &refspec])
+    git_output(&["push"], flags, &[remote, &refspec])
 }
 
-pub fn pull(remote: &str, branch: &str, flags: &[&str]) -> Result<()> {
-    run_git(&["pull"], flags, &[remote, branch])
+pub fn pull(remote: &str, branch: &str, flags: &[&str]) -> Result<String> {
+    git_output(&["pull"], flags, &[remote, branch])
 }
 
-fn run_git(base: &[&str], flags: &[&str], args: &[&str]) -> Result<()> {
-    let status = std::process::Command::new("git")
+fn git_output(base: &[&str], flags: &[&str], args: &[&str]) -> Result<String> {
+    let out = std::process::Command::new("git")
         .args(base).args(flags).args(args)
-        .status()
+        .output()
         .context(format!("failed to run git {}", base[0]))?;
-    if !status.success() {
-        anyhow::bail!("git {} failed", base[0]);
+    parse_output(&out)
+}
+
+fn git_output_with_file(base: &[&str], flags: &[&str], file: &std::path::Path) -> Result<String> {
+    let out = std::process::Command::new("git")
+        .args(base).args(flags).arg("-F").arg(file)
+        .output()
+        .context(format!("failed to run git {}", base[0]))?;
+    parse_output(&out)
+}
+
+fn parse_output(out: &std::process::Output) -> Result<String> {
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let text = if !stderr.is_empty() { &stderr } else { &stdout };
+    if !out.status.success() {
+        let first = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("git command failed");
+        anyhow::bail!("{}", first);
     }
-    Ok(())
+    Ok(text.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("Done").to_string())
 }
 
 pub fn load() -> Result<RepoStatus> {
@@ -305,40 +321,26 @@ pub fn head_message() -> Result<String> {
     Ok(head.message().unwrap_or("").trim().to_string())
 }
 
-pub fn commit(message: &str, flags: &[&str]) -> Result<()> {
-    let tmp = write_msg_file(message)?;
-    run_git_with_file(&["commit"], flags, &tmp)
+pub fn commit(message: &str, flags: &[&str]) -> Result<String> {
+    git_output_with_file(&["commit"], flags, &write_msg_file(message)?)
 }
 
-pub fn amend(message: &str, flags: &[&str]) -> Result<()> {
-    let tmp = write_msg_file(message)?;
-    run_git_with_file(&["commit", "--amend"], flags, &tmp)
+pub fn amend(message: &str, flags: &[&str]) -> Result<String> {
+    git_output_with_file(&["commit", "--amend"], flags, &write_msg_file(message)?)
 }
 
-pub fn reword(message: &str, flags: &[&str]) -> Result<()> {
-    let tmp = write_msg_file(message)?;
-    run_git_with_file(&["commit", "--amend", "--only"], flags, &tmp)
+pub fn reword(message: &str, flags: &[&str]) -> Result<String> {
+    git_output_with_file(&["commit", "--amend", "--only"], flags, &write_msg_file(message)?)
 }
 
-pub fn extend(flags: &[&str]) -> Result<()> {
-    run_git(&["commit", "--amend", "--no-edit"], flags, &[])
+pub fn extend(flags: &[&str]) -> Result<String> {
+    git_output(&["commit", "--amend", "--no-edit"], flags, &[])
 }
 
 fn write_msg_file(message: &str) -> Result<std::path::PathBuf> {
     let path = std::env::temp_dir().join("maguito_commit_msg");
     std::fs::write(&path, message).context("failed to write commit message")?;
     Ok(path)
-}
-
-fn run_git_with_file(base: &[&str], flags: &[&str], file: &std::path::Path) -> Result<()> {
-    let status = std::process::Command::new("git")
-        .args(base).args(flags).arg("-F").arg(file)
-        .status()
-        .context(format!("failed to run git {}", base[0]))?;
-    if !status.success() {
-        anyhow::bail!("git {} failed", base[0]);
-    }
-    Ok(())
 }
 
 pub fn commit_from(repo_path: &Path, message: &str) -> Result<()> {
