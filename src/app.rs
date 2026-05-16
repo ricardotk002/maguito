@@ -327,12 +327,17 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         if !has_staged {
                             app.message = Some("Nothing staged (use -a to stage all)".into());
                         } else {
-                            if let Some(e) = suspend(terminal, || {
+                            let mut out: Option<String> = None;
+                            let r = suspend(terminal, || {
                                 if let Some(msg) = open_commit_editor(None)? {
-                                    repo::commit(&msg, &flags)?;
+                                    out = Some(repo::commit(&msg, &flags)?);
                                 }
                                 Ok(())
-                            })? { app.message = Some(format!("{:#}", e)); }
+                            });
+                            app.message = match r {
+                                Ok(()) => out,
+                                Err(e) => Some(format!("{:#}", e)),
+                            };
                             app.refresh()?;
                         }
                     }
@@ -340,32 +345,34 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     KeyAction::CommitAmend => {
                         let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
                         let prefill = repo::head_message().ok();
-                        if let Some(e) = suspend(terminal, || {
+                        let mut out: Option<String> = None;
+                        let r = suspend(terminal, || {
                             if let Some(msg) = open_commit_editor(prefill.as_deref())? {
-                                repo::amend(&msg, &flags)?;
+                                out = Some(repo::amend(&msg, &flags)?);
                             }
                             Ok(())
-                        })? { app.message = Some(format!("{:#}", e)); }
+                        });
+                        app.message = match r { Ok(()) => out, Err(e) => Some(format!("{:#}", e)) };
                         app.refresh()?;
                     }
 
                     KeyAction::CommitReword => {
                         let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
                         let prefill = repo::head_message().ok();
-                        if let Some(e) = suspend(terminal, || {
+                        let mut out: Option<String> = None;
+                        let r = suspend(terminal, || {
                             if let Some(msg) = open_commit_editor(prefill.as_deref())? {
-                                repo::reword(&msg, &flags)?;
+                                out = Some(repo::reword(&msg, &flags)?);
                             }
                             Ok(())
-                        })? { app.message = Some(format!("{:#}", e)); }
+                        });
+                        app.message = match r { Ok(()) => out, Err(e) => Some(format!("{:#}", e)) };
                         app.refresh()?;
                     }
 
                     KeyAction::CommitExtend => {
                         let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
-                        if let Some(e) = suspend(terminal, || repo::extend(&flags))? {
-                            app.message = Some(format!("{:#}", e));
-                        }
+                        app.message = Some(repo::extend(&flags).unwrap_or_else(|e| format!("{:#}", e)));
                         app.refresh()?;
                     }
 
@@ -380,9 +387,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         match repo::get_push_remote() {
                             Err(e) => app.message = Some(format!("{:#}", e)),
                             Ok(remote) => {
-                                if let Some(e) = suspend(terminal, || repo::fetch(&remote, &flags))? {
-                                    app.message = Some(format!("{:#}", e));
-                                }
+                                app.message = Some(format!("Fetching from {remote}…"));
+                                draw_app(terminal, &app)?;
+                                app.message = Some(repo::fetch(&remote, &flags).unwrap_or_else(|e| format!("{:#}", e)));
                                 app.refresh()?;
                             }
                         }
@@ -393,9 +400,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         match repo::get_upstream() {
                             Err(e) => app.message = Some(format!("{:#}", e)),
                             Ok((remote, _)) => {
-                                if let Some(e) = suspend(terminal, || repo::fetch(&remote, &flags))? {
-                                    app.message = Some(format!("{:#}", e));
-                                }
+                                app.message = Some(format!("Fetching from {remote}…"));
+                                draw_app(terminal, &app)?;
+                                app.message = Some(repo::fetch(&remote, &flags).unwrap_or_else(|e| format!("{:#}", e)));
                                 app.refresh()?;
                             }
                         }
@@ -403,9 +410,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
 
                     KeyAction::FetchAll => {
                         let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
-                        if let Some(e) = suspend(terminal, || repo::fetch_all(&flags))? {
-                            app.message = Some(format!("{:#}", e));
-                        }
+                        app.message = Some("Fetching all remotes…".into());
+                        draw_app(terminal, &app)?;
+                        app.message = Some(repo::fetch_all(&flags).unwrap_or_else(|e| format!("{:#}", e)));
                         app.refresh()?;
                     }
 
@@ -414,9 +421,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         match repo::get_push_remote() {
                             Err(e) => app.message = Some(format!("{:#}", e)),
                             Ok(remote) => {
-                                if let Some(e) = suspend(terminal, || repo::push(&remote, &flags))? {
-                                    app.message = Some(format!("{:#}", e));
-                                }
+                                app.message = Some(format!("Pushing to {remote}…"));
+                                draw_app(terminal, &app)?;
+                                app.message = Some(repo::push(&remote, &flags).unwrap_or_else(|e| format!("{:#}", e)));
                                 app.refresh()?;
                             }
                         }
@@ -427,9 +434,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         match repo::get_upstream() {
                             Err(e) => app.message = Some(format!("{:#}", e)),
                             Ok((remote, branch)) => {
-                                if let Some(e) = suspend(terminal, || repo::push_to_upstream(&remote, &branch, &flags))? {
-                                    app.message = Some(format!("{:#}", e));
-                                }
+                                app.message = Some(format!("Pushing to {remote}/{branch}…"));
+                                draw_app(terminal, &app)?;
+                                app.message = Some(repo::push_to_upstream(&remote, &branch, &flags).unwrap_or_else(|e| format!("{:#}", e)));
                                 app.refresh()?;
                             }
                         }
@@ -440,9 +447,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         match repo::get_push_remote().and_then(|r| repo::current_branch().map(|b| (r, b))) {
                             Err(e) => app.message = Some(format!("{:#}", e)),
                             Ok((remote, branch)) => {
-                                if let Some(e) = suspend(terminal, || repo::pull(&remote, &branch, &flags))? {
-                                    app.message = Some(format!("{:#}", e));
-                                }
+                                app.message = Some(format!("Pulling from {remote}…"));
+                                draw_app(terminal, &app)?;
+                                app.message = Some(repo::pull(&remote, &branch, &flags).unwrap_or_else(|e| format!("{:#}", e)));
                                 app.refresh()?;
                             }
                         }
@@ -453,9 +460,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         match repo::get_upstream() {
                             Err(e) => app.message = Some(format!("{:#}", e)),
                             Ok((remote, branch)) => {
-                                if let Some(e) = suspend(terminal, || repo::pull(&remote, &branch, &flags))? {
-                                    app.message = Some(format!("{:#}", e));
-                                }
+                                app.message = Some(format!("Pulling from {remote}/{branch}…"));
+                                draw_app(terminal, &app)?;
+                                app.message = Some(repo::pull(&remote, &branch, &flags).unwrap_or_else(|e| format!("{:#}", e)));
                                 app.refresh()?;
                             }
                         }
@@ -482,13 +489,19 @@ fn enter_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
     Ok(())
 }
 
-fn suspend<F>(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, f: F) -> Result<Option<anyhow::Error>>
-where F: FnOnce() -> Result<()>
-{
+fn suspend<F: FnOnce() -> Result<()>>(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, f: F) -> Result<()> {
     leave_tui(terminal)?;
     let result = f();
     enter_tui(terminal)?;
-    Ok(result.err())
+    result
+}
+
+fn draw_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> Result<()> {
+    terminal.draw(|f| {
+        crate::ui::status::render(f, app);
+        if app.transient.is_some() { crate::ui::transient::render(f, app); }
+    })?;
+    Ok(())
 }
 
 fn open_commit_editor(prefill: Option<&str>) -> Result<Option<String>> {
