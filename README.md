@@ -2,7 +2,7 @@
 
 A fast git TUI inspired by Magit
 
-![maguito screenshot](docs/screenshot.png)
+![maguito demo](docs/demo.gif)
 
 ## Install
 
