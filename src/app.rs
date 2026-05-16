@@ -377,6 +377,93 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                             app.message = Some(format!("{:#}", e));
                         }
                     }
+
+                    KeyAction::FetchFromPushRemote => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        match repo::get_push_remote() {
+                            Err(e) => app.message = Some(format!("{:#}", e)),
+                            Ok(remote) => {
+                                leave_tui(terminal)?;
+                                repo::fetch(&remote, &flags).ok();
+                                enter_tui(terminal)?;
+                                app.refresh()?;
+                            }
+                        }
+                    }
+
+                    KeyAction::FetchFromUpstream => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        match repo::get_upstream() {
+                            Err(e) => app.message = Some(format!("{:#}", e)),
+                            Ok((remote, _)) => {
+                                leave_tui(terminal)?;
+                                repo::fetch(&remote, &flags).ok();
+                                enter_tui(terminal)?;
+                                app.refresh()?;
+                            }
+                        }
+                    }
+
+                    KeyAction::FetchAll => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        leave_tui(terminal)?;
+                        repo::fetch_all(&flags).ok();
+                        enter_tui(terminal)?;
+                        app.refresh()?;
+                    }
+
+                    KeyAction::PushToPushRemote => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        match repo::get_push_remote() {
+                            Err(e) => app.message = Some(format!("{:#}", e)),
+                            Ok(remote) => {
+                                leave_tui(terminal)?;
+                                repo::push(&remote, &flags).ok();
+                                enter_tui(terminal)?;
+                                app.refresh()?;
+                            }
+                        }
+                    }
+
+                    KeyAction::PushToUpstream => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        match repo::get_upstream() {
+                            Err(e) => app.message = Some(format!("{:#}", e)),
+                            Ok((remote, branch)) => {
+                                leave_tui(terminal)?;
+                                repo::push_to_upstream(&remote, &branch, &flags).ok();
+                                enter_tui(terminal)?;
+                                app.refresh()?;
+                            }
+                        }
+                    }
+
+                    KeyAction::PullFromPushRemote => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        match repo::get_push_remote().and_then(|r| repo::current_branch().map(|b| (r, b))) {
+                            Err(e) => app.message = Some(format!("{:#}", e)),
+                            Ok((remote, branch)) => {
+                                leave_tui(terminal)?;
+                                repo::pull(&remote, &branch, &flags).ok();
+                                enter_tui(terminal)?;
+                                app.refresh()?;
+                            }
+                        }
+                    }
+
+                    KeyAction::PullFromUpstream => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        match repo::get_upstream() {
+                            Err(e) => app.message = Some(format!("{:#}", e)),
+                            Ok((remote, branch)) => {
+                                leave_tui(terminal)?;
+                                repo::pull(&remote, &branch, &flags).ok();
+                                enter_tui(terminal)?;
+                                app.refresh()?;
+                            }
+                        }
+                    }
+
                     KeyAction::Continue => {}
                 }
             }

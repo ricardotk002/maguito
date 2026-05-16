@@ -79,6 +79,84 @@ pub fn check() -> Result<()> {
     Ok(())
 }
 
+fn workdir() -> Result<std::path::PathBuf> {
+    let repo = Repository::discover(".")?;
+    repo.workdir()
+        .map(|p| p.to_path_buf())
+        .context("bare repositories are not supported")
+}
+
+pub fn current_branch() -> Result<String> {
+    let repo = Repository::discover(".")?;
+    let head = repo.head()?;
+    Ok(head.shorthand().unwrap_or("HEAD").to_string())
+}
+
+pub fn get_push_remote() -> Result<String> {
+    let repo = Repository::discover(".")?;
+    let branch = repo.head()?.shorthand().unwrap_or("HEAD").to_string();
+    let config = repo.config()?;
+    if let Ok(r) = config.get_string(&format!("branch.{branch}.pushRemote")) {
+        return Ok(r);
+    }
+    if let Ok(r) = config.get_string("remote.pushDefault") {
+        return Ok(r);
+    }
+    let remotes = repo.remotes()?;
+    if let Some(Some(r)) = remotes.iter().next() {
+        return Ok(r.to_string());
+    }
+    anyhow::bail!("no push remote configured")
+}
+
+pub fn get_upstream() -> Result<(String, String)> {
+    let repo = Repository::discover(".")?;
+    let branch = repo.head()?.shorthand().unwrap_or("HEAD").to_string();
+    let config = repo.config()?;
+    let remote = config.get_string(&format!("branch.{branch}.remote"))
+        .context("no upstream remote configured (set with git branch --set-upstream-to)")?;
+    let merge = config.get_string(&format!("branch.{branch}.merge"))
+        .context("no upstream branch configured")?;
+    let upstream_branch = merge.strip_prefix("refs/heads/").unwrap_or(&merge).to_string();
+    Ok((remote, upstream_branch))
+}
+
+pub fn fetch(remote: &str, flags: &[&str]) -> Result<()> {
+    std::process::Command::new("git")
+        .arg("fetch").args(flags).arg(remote)
+        .status().context("failed to run git fetch")?;
+    Ok(())
+}
+
+pub fn fetch_all(flags: &[&str]) -> Result<()> {
+    std::process::Command::new("git")
+        .arg("fetch").args(flags).arg("--all")
+        .status().context("failed to run git fetch")?;
+    Ok(())
+}
+
+pub fn push(remote: &str, flags: &[&str]) -> Result<()> {
+    std::process::Command::new("git")
+        .arg("push").args(flags).arg(remote)
+        .status().context("failed to run git push")?;
+    Ok(())
+}
+
+pub fn push_to_upstream(remote: &str, upstream_branch: &str, flags: &[&str]) -> Result<()> {
+    std::process::Command::new("git")
+        .arg("push").args(flags).arg(remote)
+        .arg(format!("HEAD:{upstream_branch}"))
+        .status().context("failed to run git push")?;
+    Ok(())
+}
+
+pub fn pull(remote: &str, branch: &str, flags: &[&str]) -> Result<()> {
+    std::process::Command::new("git")
+        .arg("pull").args(flags).arg(remote).arg(branch)
+        .status().context("failed to run git pull")?;
+    Ok(())
+}
+
 pub fn load() -> Result<RepoStatus> {
     load_from(Path::new("."))
 }
@@ -323,6 +401,7 @@ fn stage_all_modified(repo: &Repository, index: &mut git2::Index) -> Result<()> 
 
 pub fn stage_file(path: &str) -> Result<()> {
     let out = std::process::Command::new("git")
+        .current_dir(workdir()?)
         .args(["add", "--", path])
         .output()
         .context("failed to run git add")?;
@@ -355,6 +434,7 @@ pub fn discard_file(path: &str, staged: bool) -> Result<()> {
         &["checkout", "--", path]
     };
     let out = std::process::Command::new("git")
+        .current_dir(workdir()?)
         .args(args)
         .output()
         .context("failed to run git checkout")?;
@@ -365,7 +445,7 @@ pub fn discard_file(path: &str, staged: bool) -> Result<()> {
 }
 
 pub fn trash_file(path: &str) -> Result<()> {
-    let p = std::path::Path::new(path);
+    let p = workdir()?.join(path);
     if p.is_dir() {
         std::fs::remove_dir_all(p)?;
     } else {
@@ -424,6 +504,7 @@ fn git_apply(patch: &str, extra: &[&str], reverse: bool) -> Result<()> {
     args.push("-");
 
     let mut child = Command::new("git")
+        .current_dir(workdir()?)
         .args(&args)
         .stdin(Stdio::piped())
         .stderr(Stdio::piped())

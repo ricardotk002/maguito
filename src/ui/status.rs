@@ -151,6 +151,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         let lines = vec![
             section("Transient and dwim commands"),
             row("c", "Commit"),
+            row("f", "Fetch"),
+            row("F", "Pull"),
+            row("P", "Push"),
             Line::from(""),
             section("Applying changes"),
             row("s", "Stage"),
@@ -167,7 +170,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 }
 
 fn bottom_rect(r: Rect) -> Rect {
-    const HEIGHT: u16 = 12;
+    const HEIGHT: u16 = 14;
     let y = r.height.saturating_sub(HEIGHT);
     Rect { x: r.x, y: r.y + y, width: r.width, height: HEIGHT.min(r.height) }
 }

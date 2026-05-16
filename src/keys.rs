@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::App;
-use crate::transient::Transient;
+use crate::transient::{Transient, TransientKind};
 
 fn attempt(app: &mut App, f: impl FnOnce(&mut App) -> Result<()>) {
     if let Err(e) = f(app) {
@@ -18,6 +18,13 @@ pub enum KeyAction {
     CommitReword,
     CommitExtend,
     ConfirmYes,
+    FetchFromPushRemote,
+    FetchFromUpstream,
+    FetchAll,
+    PushToPushRemote,
+    PushToUpstream,
+    PullFromPushRemote,
+    PullFromUpstream,
 }
 
 pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
@@ -46,16 +53,25 @@ pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
             return Ok(KeyAction::Continue);
         }
 
-        return Ok(match key.code {
-            KeyCode::Char('-') => {
+        let kind = app.transient.as_ref().unwrap().kind; // Copy — releases borrow
+
+        return Ok(match (kind, key.code) {
+            (_, KeyCode::Char('-')) => {
                 app.transient.as_mut().unwrap().awaiting_flag = true;
                 KeyAction::Continue
             }
-            KeyCode::Char('c') => KeyAction::CommitCreate,
-            KeyCode::Char('a') => KeyAction::CommitAmend,
-            KeyCode::Char('w') => KeyAction::CommitReword,
-            KeyCode::Char('e') => KeyAction::CommitExtend,
-            KeyCode::Char('q') | KeyCode::Esc => {
+            (TransientKind::Commit, KeyCode::Char('c')) => KeyAction::CommitCreate,
+            (TransientKind::Commit, KeyCode::Char('a')) => KeyAction::CommitAmend,
+            (TransientKind::Commit, KeyCode::Char('w')) => KeyAction::CommitReword,
+            (TransientKind::Commit, KeyCode::Char('e')) => KeyAction::CommitExtend,
+            (TransientKind::Fetch,  KeyCode::Char('p')) => KeyAction::FetchFromPushRemote,
+            (TransientKind::Fetch,  KeyCode::Char('u')) => KeyAction::FetchFromUpstream,
+            (TransientKind::Fetch,  KeyCode::Char('a')) => KeyAction::FetchAll,
+            (TransientKind::Push,   KeyCode::Char('p')) => KeyAction::PushToPushRemote,
+            (TransientKind::Push,   KeyCode::Char('u')) => KeyAction::PushToUpstream,
+            (TransientKind::Pull,   KeyCode::Char('p')) => KeyAction::PullFromPushRemote,
+            (TransientKind::Pull,   KeyCode::Char('u')) => KeyAction::PullFromUpstream,
+            (_, KeyCode::Char('q')) | (_, KeyCode::Esc) => {
                 app.transient = None;
                 KeyAction::Continue
             }
@@ -71,9 +87,12 @@ pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
         (_, KeyCode::Char('s')) => { attempt(app, |a| a.stage_current());   KeyAction::Continue }
         (_, KeyCode::Char('u')) => { attempt(app, |a| a.unstage_current()); KeyAction::Continue }
         (_, KeyCode::Char('g')) => { attempt(app, |a| a.refresh());         KeyAction::Continue }
-        (_, KeyCode::Char('x'))                       => { app.discard_current(); KeyAction::Continue }
-        (_, KeyCode::Char('c'))                       => { app.transient = Some(Transient::commit()); KeyAction::Continue }
-        (_, KeyCode::Char('?'))                       => { app.show_help = true; KeyAction::Continue }
-        _                                             => KeyAction::Continue,
+        (_, KeyCode::Char('x')) => { app.discard_current(); KeyAction::Continue }
+        (_, KeyCode::Char('c')) => { app.transient = Some(Transient::commit()); KeyAction::Continue }
+        (_, KeyCode::Char('f')) => { app.transient = Some(Transient::fetch()); KeyAction::Continue }
+        (_, KeyCode::Char('p')) | (_, KeyCode::Char('P')) => { app.transient = Some(Transient::push());  KeyAction::Continue }
+        (_, KeyCode::Char('F')) => { app.transient = Some(Transient::pull());  KeyAction::Continue }
+        (_, KeyCode::Char('?')) => { app.show_help = true; KeyAction::Continue }
+        _                       => KeyAction::Continue,
     })
 }
