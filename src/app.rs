@@ -525,7 +525,10 @@ fn open_commit_editor(prefill: Option<&str>) -> Result<Option<String>> {
         .or_else(|_| std::env::var("EDITOR"))
         .unwrap_or_else(|_| "vi".into());
 
-    std::process::Command::new(&editor)
+    let mut parts = editor.split_whitespace();
+    let bin = parts.next().unwrap_or("vi");
+    std::process::Command::new(bin)
+        .args(parts)
         .arg(&tmp)
         .status()
         .context("failed to open editor")?;
