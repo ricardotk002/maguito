@@ -31,8 +31,17 @@ pub fn render(frame: &mut Frame, app: &App) {
     ])));
     list_items.push(ListItem::new(""));
 
-    for item in &cursor_items {
+    let visual_range = app.visual_range();
+
+    for (ci, item) in cursor_items.iter().enumerate() {
         cursor_map.push(list_items.len());
+
+        let in_visual = visual_range.map_or(false, |(lo, hi)| ci >= lo && ci <= hi);
+        let vbg = if in_visual {
+            Style::default().bg(Color::Rgb(60, 60, 20))
+        } else {
+            Style::default()
+        };
 
         match item {
             CursorItem::Section(si) => {
@@ -49,7 +58,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 list_items.push(ListItem::new(Line::from(Span::styled(
                     label,
                     Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
-                ))));
+                )).style(vbg)));
             }
 
             CursorItem::File(si, fi) => {
@@ -68,39 +77,37 @@ pub fn render(frame: &mut Frame, app: &App) {
                 list_items.push(ListItem::new(Line::from(vec![
                     Span::styled(prefix, Style::default().fg(Color::Reset)),
                     Span::styled(file.entry.path.clone(), Style::default().fg(color)),
-                ])));
+                ]).style(vbg)));
             }
 
             CursorItem::Hunk(si, fi, hi) => {
-                let file = &app.sections[*si].files[*fi];
-                let hunk = &file.entry.hunks[*hi];
+                let hunk = &app.sections[*si].files[*fi].entry.hunks[*hi];
                 list_items.push(ListItem::new(Line::from(Span::styled(
                     hunk.header.clone(),
                     Style::default().fg(Color::Cyan),
-                ))));
-                if !file.hunk_collapsed[*hi] {
-                    for dl in &hunk.lines {
-                        let (color, prefix) = match dl.origin {
-                            '+' => (Color::Green, "+"),
-                            '-' => (Color::Red,   "-"),
-                            _   => (Color::Reset, " "),
-                        };
-                        list_items.push(ListItem::new(Line::from(Span::styled(
-                            format!("{prefix}{}", dl.content),
-                            Style::default().fg(color),
-                        ))));
-                    }
-                }
+                )).style(vbg)));
+            }
+
+            CursorItem::DiffLine(si, fi, hi, li) => {
+                let dl = &app.sections[*si].files[*fi].entry.hunks[*hi].lines[*li];
+                let (color, prefix) = match dl.origin {
+                    '+' => (Color::Green, "+"),
+                    '-' => (Color::Red,   "-"),
+                    _   => (Color::Reset, " "),
+                };
+                list_items.push(ListItem::new(Line::from(Span::styled(
+                    format!("{prefix}{}", dl.content),
+                    Style::default().fg(color),
+                )).style(vbg)));
             }
 
             CursorItem::CommitHeader => {
                 list_items.push(ListItem::new(Line::from("")));
-                // CommitHeader is the cursor position; blank line above is non-selectable
-                cursor_map.last_mut().map(|v| *v += 1); // adjust to point at the header row
+                cursor_map.last_mut().map(|v| *v += 1);
                 list_items.push(ListItem::new(Line::from(Span::styled(
                     "Recent commits",
                     Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
-                ))));
+                )).style(vbg)));
             }
 
             CursorItem::Commit(i) => {
@@ -109,7 +116,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     Span::styled(c.sha.clone(), Style::default().fg(Color::Yellow)),
                     Span::raw(" "),
                     Span::raw(c.message.clone()),
-                ])));
+                ]).style(vbg)));
             }
         }
     }
@@ -154,6 +161,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             row("f", "Fetch"),
             row("F", "Pull"),
             row("P", "Push"),
+            row("z", "Stash"),
             Line::from(""),
             section("Applying changes"),
             row("s", "Stage"),

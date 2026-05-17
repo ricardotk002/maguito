@@ -65,12 +65,50 @@ pub const FETCH_ACTIONS: &[ActionDef] = &[
     ActionDef { key: 'a', label: "all remotes" },
 ];
 
+pub const STASH_FLAGS: &[FlagDef] = &[
+    FlagDef { key: 'u', short: "-u", label: "Include untracked files", git_flag: "--include-untracked" },
+    FlagDef { key: 'a', short: "-a", label: "Include all files",       git_flag: "--all" },
+];
+
+pub const STASH_STASH: &[ActionDef] = &[
+    ActionDef { key: 'z', label: "both" },
+    ActionDef { key: 'i', label: "index" },
+    ActionDef { key: 'w', label: "worktree" },
+    ActionDef { key: 'x', label: "keeping index" },
+    ActionDef { key: 'P', label: "push" },
+];
+
+pub const STASH_SNAPSHOT: &[ActionDef] = &[
+    ActionDef { key: 'Z', label: "both" },
+    ActionDef { key: 'I', label: "index" },
+    ActionDef { key: 'W', label: "worktree" },
+    ActionDef { key: 'r', label: "to wip ref" },
+];
+
+pub const STASH_USE: &[ActionDef] = &[
+    ActionDef { key: 'a', label: "Apply" },
+    ActionDef { key: 'p', label: "Pop" },
+    ActionDef { key: 'k', label: "Drop" },
+];
+
+pub const STASH_INSPECT: &[ActionDef] = &[
+    ActionDef { key: 'l', label: "List" },
+    ActionDef { key: 'v', label: "Show" },
+];
+
+pub const STASH_TRANSFORM: &[ActionDef] = &[
+    ActionDef { key: 'b', label: "Branch" },
+    ActionDef { key: 'B', label: "Branch here" },
+    ActionDef { key: 'f', label: "Format patch" },
+];
+
 #[derive(Copy, Clone)]
 pub enum TransientKind {
     Commit,
     Fetch,
     Push,
     Pull,
+    Stash,
 }
 
 pub struct Transient {
@@ -91,6 +129,9 @@ impl Transient {
     }
     pub fn pull() -> Self {
         Self { kind: TransientKind::Pull, active_flags: HashSet::new(), awaiting_flag: false }
+    }
+    pub fn stash() -> Self {
+        Self { kind: TransientKind::Stash, active_flags: HashSet::new(), awaiting_flag: false }
     }
 
     pub fn flags_vec(&self) -> Vec<&'static str> {
@@ -119,6 +160,7 @@ impl Transient {
             TransientKind::Fetch  => FETCH_FLAGS,
             TransientKind::Push   => PUSH_FLAGS,
             TransientKind::Pull   => PULL_FLAGS,
+            TransientKind::Stash  => STASH_FLAGS,
         }
     }
 }

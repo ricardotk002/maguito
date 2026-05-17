@@ -13,6 +13,7 @@ use crate::transient::{
     FETCH_ACTIONS, FETCH_FLAGS,
     PULL_ACTIONS, PULL_FLAGS,
     PUSH_ACTIONS, PUSH_FLAGS,
+    STASH_FLAGS, STASH_TRANSFORM,
 };
 use std::collections::HashSet;
 
@@ -24,6 +25,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         TransientKind::Fetch  => (simple_lines("Fetch from", FETCH_FLAGS, FETCH_ACTIONS, transient), 8u16),
         TransientKind::Push   => (simple_lines("Push to", PUSH_FLAGS, PUSH_ACTIONS, transient), 10u16),
         TransientKind::Pull   => (simple_lines("Pull from", PULL_FLAGS, PULL_ACTIONS, transient), 9u16),
+        TransientKind::Stash  => (stash_lines(transient), 20u16),
     };
 
     let area = bottom_rect(frame.area(), height);
@@ -117,6 +119,77 @@ fn commit_lines(transient: &crate::transient::Transient) -> Vec<Line<'static>> {
             spans.push(Span::raw(format!("  {}", a.label)));
         }
         lines.push(Line::from(spans));
+    }
+
+    lines
+}
+
+const STASH_COL: usize = 24;
+
+fn stash_col_header(left: &'static str, right: &'static str) -> Line<'static> {
+    let style = Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD);
+    let pad = STASH_COL.saturating_sub(left.len());
+    Line::from(vec![
+        Span::styled(left, style),
+        Span::raw(" ".repeat(pad)),
+        Span::styled(right, style),
+    ])
+}
+
+fn stash_action_pair(
+    left: Option<(char, &'static str)>,
+    right: Option<(char, &'static str)>,
+) -> Line<'static> {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let mut spans: Vec<Span<'static>> = vec![Span::raw("  ")];
+    match left {
+        Some((k, l)) => {
+            let suffix = format!("  {}", l);
+            let used = 2 + 1 + suffix.len();
+            let pad = STASH_COL.saturating_sub(used).max(1);
+            spans.push(Span::styled(k.to_string(), bold));
+            spans.push(Span::raw(format!("{}{}", suffix, " ".repeat(pad))));
+        }
+        None => spans.push(Span::raw(" ".repeat(STASH_COL - 2))),
+    }
+    if let Some((k, l)) = right {
+        spans.push(Span::styled(k.to_string(), bold));
+        spans.push(Span::raw(format!("  {}", l)));
+    }
+    Line::from(spans)
+}
+
+fn stash_lines(transient: &crate::transient::Transient) -> Vec<Line<'static>> {
+    let mut lines = flags_block(STASH_FLAGS, &transient.active_flags);
+    lines.push(Line::from(""));
+
+    lines.push(stash_col_header("Stash", "Snapshot"));
+    let stash_snap: &[(Option<(char, &str)>, Option<(char, &str)>)] = &[
+        (Some(('z', "both")),           Some(('Z', "both"))),
+        (Some(('i', "index")),          Some(('I', "index"))),
+        (Some(('w', "worktree")),       Some(('W', "worktree"))),
+        (Some(('x', "keeping index")), Some(('r', "to wip ref"))),
+        (Some(('P', "push")),           None),
+    ];
+    for &(l, r) in stash_snap {
+        lines.push(stash_action_pair(l, r));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(stash_col_header("Use", "Inspect"));
+    let use_inspect: &[(Option<(char, &str)>, Option<(char, &str)>)] = &[
+        (Some(('a', "Apply")), Some(('l', "List"))),
+        (Some(('p', "Pop")),   Some(('v', "Show"))),
+        (Some(('k', "Drop")),  None),
+    ];
+    for &(l, r) in use_inspect {
+        lines.push(stash_action_pair(l, r));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(section("Transform"));
+    for a in STASH_TRANSFORM {
+        lines.push(action_row(a));
     }
 
     lines

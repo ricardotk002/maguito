@@ -121,6 +121,61 @@ pub fn get_upstream() -> Result<(String, String)> {
     Ok((remote, upstream_branch))
 }
 
+pub fn stash_push_paths(paths: &[String]) -> Result<String> {
+    let out = std::process::Command::new("git")
+        .args(["stash", "push", "--include-untracked", "--"])
+        .args(paths)
+        .output()
+        .context("failed to run git stash push")?;
+    parse_output(&out)
+}
+
+pub fn stash_push(flags: &[&str]) -> Result<String> {
+    git_output(&["stash", "push"], flags, &[])
+}
+
+pub fn stash_push_staged(flags: &[&str]) -> Result<String> {
+    git_output(&["stash", "push", "--staged"], flags, &[])
+}
+
+pub fn stash_push_keep_index(flags: &[&str]) -> Result<String> {
+    git_output(&["stash", "push", "--keep-index"], flags, &[])
+}
+
+pub fn stash_pop() -> Result<String> {
+    git_output(&["stash", "pop"], &[], &[])
+}
+
+pub fn stash_apply() -> Result<String> {
+    git_output(&["stash", "apply"], &[], &[])
+}
+
+pub fn stash_drop() -> Result<String> {
+    git_output(&["stash", "drop"], &[], &[])
+}
+
+pub fn stash_list() -> Result<String> {
+    let out = std::process::Command::new("git")
+        .args(["stash", "list"])
+        .output()
+        .context("failed to run git stash list")?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!("{}", err.lines().next().unwrap_or("git stash list failed"));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let entries: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    match entries.len() {
+        0 => Ok("No stashes".into()),
+        1 => Ok(entries[0].to_string()),
+        n => Ok(format!("{n} stashes, latest: {}", entries[0])),
+    }
+}
+
+pub fn stash_show() -> Result<String> {
+    git_output(&["stash", "show"], &[], &[])
+}
+
 pub fn fetch(remote: &str, flags: &[&str]) -> Result<String> {
     git_output(&["fetch"], flags, &[remote])
 }
@@ -421,6 +476,63 @@ pub fn discard_hunk(file_path: &str, hunk: &Hunk, staged: bool) -> Result<()> {
     } else {
         run_git_apply_worktree(&patch, true) // --reverse: restore working tree
     }
+}
+
+fn build_partial_patch(file_path: &str, hunk: &Hunk, selected: &[usize]) -> String {
+    let sel: std::collections::HashSet<usize> = selected.iter().copied().collect();
+    let mut body = String::new();
+    let mut old_count = 0u32;
+    let mut new_count = 0u32;
+
+    for (i, line) in hunk.lines.iter().enumerate() {
+        match line.origin {
+            ' ' => {
+                body.push(' '); body.push_str(&line.content); body.push('\n');
+                old_count += 1; new_count += 1;
+            }
+            '+' if sel.contains(&i) => {
+                body.push('+'); body.push_str(&line.content); body.push('\n');
+                new_count += 1;
+            }
+            '+' => {} // unselected addition: skip (stays unstaged)
+            '-' if sel.contains(&i) => {
+                body.push('-'); body.push_str(&line.content); body.push('\n');
+                old_count += 1;
+            }
+            '-' => {
+                // unselected deletion: treat as context (kept in index)
+                body.push(' '); body.push_str(&line.content); body.push('\n');
+                old_count += 1; new_count += 1;
+            }
+            _ => {}
+        }
+    }
+
+    let mut s = String::new();
+    s.push_str(&format!("diff --git a/{file_path} b/{file_path}\n"));
+    s.push_str(&format!("--- a/{file_path}\n"));
+    s.push_str(&format!("+++ b/{file_path}\n"));
+    s.push_str(&format!("@@ -{},{} +{},{} @@\n", hunk.old_start, old_count, hunk.new_start, new_count));
+    s.push_str(&body);
+    s
+}
+
+pub fn stage_lines(file_path: &str, hunk: &Hunk, selected: &[usize]) -> Result<()> {
+    let patch = build_partial_patch(file_path, hunk, selected);
+    run_git_apply(&patch, false)
+}
+
+pub fn unstage_lines(file_path: &str, hunk: &Hunk, selected: &[usize]) -> Result<()> {
+    let patch = build_partial_patch(file_path, hunk, selected);
+    run_git_apply(&patch, true)
+}
+
+pub fn discard_lines(file_path: &str, hunk: &Hunk, selected: &[usize], staged: bool) -> Result<()> {
+    let patch = build_partial_patch(file_path, hunk, selected);
+    if staged {
+        run_git_apply(&patch, true)?;
+    }
+    run_git_apply_worktree(&patch, true)
 }
 
 fn build_patch(file_path: &str, hunk: &Hunk) -> String {
