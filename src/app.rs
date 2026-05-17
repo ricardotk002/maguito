@@ -11,9 +11,10 @@ use crate::git::repo::{self, CommitInfo, FileEntry, SectionKind};
 use crate::transient::Transient;
 
 pub enum ConfirmKind {
-    Discard,     // tracked file — checkout to discard changes
-    Trash,       // untracked file — delete from disk
-    DiscardHunk, // single hunk — reverse-apply
+    Discard,
+    Trash,
+    DiscardHunk,
+    DiscardBatch(Vec<CursorItem>),
 }
 
 pub struct Confirm {
@@ -30,6 +31,7 @@ pub struct App {
     pub commits: Vec<CommitInfo>,
     pub commits_collapsed: bool,
     pub cursor: usize,
+    pub visual_anchor: Option<usize>,
     pub transient: Option<Transient>,
     pub confirm: Option<Confirm>,
     pub message: Option<String>,
@@ -53,6 +55,7 @@ pub enum CursorItem {
     Section(usize),
     File(usize, usize),
     Hunk(usize, usize, usize),
+    DiffLine(usize, usize, usize, usize), // si, fi, hi, li
     CommitHeader,
     Commit(usize),
 }
@@ -83,6 +86,7 @@ impl App {
             commits: status.commits,
             commits_collapsed: false,
             cursor: 0,
+            visual_anchor: None,
             transient: None,
             confirm: None,
             message: None,
@@ -130,8 +134,13 @@ impl App {
                 for (fi, file) in section.files.iter().enumerate() {
                     items.push(CursorItem::File(si, fi));
                     if !file.collapsed {
-                        for (hi, _) in file.entry.hunks.iter().enumerate() {
+                        for (hi, hunk) in file.entry.hunks.iter().enumerate() {
                             items.push(CursorItem::Hunk(si, fi, hi));
+                            if !file.hunk_collapsed[hi] {
+                                for (li, _) in hunk.lines.iter().enumerate() {
+                                    items.push(CursorItem::DiffLine(si, fi, hi, li));
+                                }
+                            }
                         }
                     }
                 }
@@ -212,26 +221,72 @@ impl App {
                     prompt: format!("Discard hunk from \"{}\"? (y or n)", path),
                 });
             }
+            Some(CursorItem::DiffLine(si, fi, hi, li)) => {
+                let origin = self.sections[si].files[fi].entry.hunks[hi].lines[li].origin;
+                if origin == '+' || origin == '-' {
+                    self.confirm = Some(Confirm {
+                        kind: ConfirmKind::DiscardBatch(vec![CursorItem::DiffLine(si, fi, hi, li)]),
+                        section: si, file: fi, hunk: None,
+                        prompt: "Discard this line? (y or n)".into(),
+                    });
+                }
+            }
             _ => {}
         }
     }
 
     pub fn execute_confirm(&mut self) -> Result<()> {
         if let Some(c) = self.confirm.take() {
-            let path = self.sections[c.section].files[c.file].entry.path.clone();
             match c.kind {
                 ConfirmKind::Discard => {
+                    let path = self.sections[c.section].files[c.file].entry.path.clone();
                     let staged = self.sections[c.section].kind == SectionKind::Staged;
                     repo::discard_file(&path, staged)?;
                 }
                 ConfirmKind::Trash => {
+                    let path = self.sections[c.section].files[c.file].entry.path.clone();
                     repo::trash_file(&path)?;
                 }
                 ConfirmKind::DiscardHunk => {
+                    let path = self.sections[c.section].files[c.file].entry.path.clone();
                     let hi = c.hunk.unwrap();
                     let hunk = self.sections[c.section].files[c.file].entry.hunks[hi].clone();
                     let staged = self.sections[c.section].kind == SectionKind::Staged;
                     repo::discard_hunk(&path, &hunk, staged)?;
+                }
+                ConfirmKind::DiscardBatch(items) => {
+                    // Collect DiffLine items grouped by hunk; apply others immediately.
+                    let mut hunk_lines: std::collections::HashMap<(usize, usize, usize), Vec<usize>> = std::collections::HashMap::new();
+                    for item in &items {
+                        match *item {
+                            CursorItem::File(si, fi) => {
+                                let path = self.sections[si].files[fi].entry.path.clone();
+                                match self.sections[si].kind {
+                                    SectionKind::Untracked => repo::trash_file(&path)?,
+                                    _ => {
+                                        let staged = self.sections[si].kind == SectionKind::Staged;
+                                        repo::discard_file(&path, staged)?;
+                                    }
+                                }
+                            }
+                            CursorItem::Hunk(si, fi, hi) => {
+                                let path = self.sections[si].files[fi].entry.path.clone();
+                                let hunk = self.sections[si].files[fi].entry.hunks[hi].clone();
+                                let staged = self.sections[si].kind == SectionKind::Staged;
+                                repo::discard_hunk(&path, &hunk, staged)?;
+                            }
+                            CursorItem::DiffLine(si, fi, hi, li) => {
+                                hunk_lines.entry((si, fi, hi)).or_default().push(li);
+                            }
+                            _ => {}
+                        }
+                    }
+                    for ((si, fi, hi), lines) in hunk_lines {
+                        let path = self.sections[si].files[fi].entry.path.clone();
+                        let hunk = self.sections[si].files[fi].entry.hunks[hi].clone();
+                        let staged = self.sections[si].kind == SectionKind::Staged;
+                        repo::discard_lines(&path, &hunk, &lines, staged)?;
+                    }
                 }
             }
             self.refresh()?;
@@ -269,9 +324,126 @@ impl App {
                     repo::stage_hunk(&path, &hunk)?;
                 }
             }
+            Some(CursorItem::DiffLine(si, fi, hi, li)) => {
+                if self.sections[si].kind == SectionKind::Unstaged {
+                    let path = self.sections[si].files[fi].entry.path.clone();
+                    let hunk = self.sections[si].files[fi].entry.hunks[hi].clone();
+                    repo::stage_lines(&path, &hunk, &[li])?;
+                }
+            }
             _ => {}
         }
         self.refresh()
+    }
+
+    pub fn visual_range(&self) -> Option<(usize, usize)> {
+        self.visual_anchor.map(|anchor| {
+            (anchor.min(self.cursor), anchor.max(self.cursor))
+        })
+    }
+
+    pub fn stage_visual(&mut self) -> Result<()> {
+        let Some((lo, hi)) = self.visual_range() else { return self.stage_current() };
+        let items = self.visible_items();
+        let mut hunk_lines: std::collections::HashMap<(usize, usize, usize), Vec<usize>> = std::collections::HashMap::new();
+        for i in lo..=hi {
+            match items.get(i) {
+                Some(CursorItem::File(si, fi)) => {
+                    let stageable = matches!(self.sections[*si].kind, SectionKind::Untracked | SectionKind::Unstaged);
+                    if stageable {
+                        repo::stage_file(&self.sections[*si].files[*fi].entry.path)?;
+                    }
+                }
+                Some(CursorItem::Hunk(si, fi, hi_)) => {
+                    if self.sections[*si].kind == SectionKind::Unstaged {
+                        let path = self.sections[*si].files[*fi].entry.path.clone();
+                        let hunk = self.sections[*si].files[*fi].entry.hunks[*hi_].clone();
+                        repo::stage_hunk(&path, &hunk)?;
+                    }
+                }
+                Some(CursorItem::DiffLine(si, fi, hi_, li)) => {
+                    if self.sections[*si].kind == SectionKind::Unstaged {
+                        hunk_lines.entry((*si, *fi, *hi_)).or_default().push(*li);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for ((si, fi, hi_), lines) in hunk_lines {
+            let path = self.sections[si].files[fi].entry.path.clone();
+            let hunk = self.sections[si].files[fi].entry.hunks[hi_].clone();
+            repo::stage_lines(&path, &hunk, &lines)?;
+        }
+        self.visual_anchor = None;
+        self.refresh()
+    }
+
+    pub fn unstage_visual(&mut self) -> Result<()> {
+        let Some((lo, hi)) = self.visual_range() else { return self.unstage_current() };
+        let items = self.visible_items();
+        let mut hunk_lines: std::collections::HashMap<(usize, usize, usize), Vec<usize>> = std::collections::HashMap::new();
+        for i in lo..=hi {
+            match items.get(i) {
+                Some(CursorItem::File(si, fi)) => {
+                    if self.sections[*si].kind == SectionKind::Staged {
+                        repo::unstage_file(&self.sections[*si].files[*fi].entry.path)?;
+                    }
+                }
+                Some(CursorItem::Hunk(si, fi, hi_)) => {
+                    if self.sections[*si].kind == SectionKind::Staged {
+                        let path = self.sections[*si].files[*fi].entry.path.clone();
+                        let hunk = self.sections[*si].files[*fi].entry.hunks[*hi_].clone();
+                        repo::unstage_hunk(&path, &hunk)?;
+                    }
+                }
+                Some(CursorItem::DiffLine(si, fi, hi_, li)) => {
+                    if self.sections[*si].kind == SectionKind::Staged {
+                        hunk_lines.entry((*si, *fi, *hi_)).or_default().push(*li);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for ((si, fi, hi_), lines) in hunk_lines {
+            let path = self.sections[si].files[fi].entry.path.clone();
+            let hunk = self.sections[si].files[fi].entry.hunks[hi_].clone();
+            repo::unstage_lines(&path, &hunk, &lines)?;
+        }
+        self.visual_anchor = None;
+        self.refresh()
+    }
+
+    pub fn stash_visual(&mut self) -> Result<()> {
+        let Some((lo, hi)) = self.visual_range() else { return Ok(()) };
+        let items = self.visible_items();
+        let mut paths: Vec<String> = Vec::new();
+        for i in lo..=hi {
+            if let Some(CursorItem::File(si, fi)) = items.get(i) {
+                paths.push(self.sections[*si].files[*fi].entry.path.clone());
+            }
+        }
+        if paths.is_empty() { self.visual_anchor = None; return Ok(()); }
+        self.visual_anchor = None;
+        repo::stash_push_paths(&paths)?;
+        self.refresh()
+    }
+
+    pub fn discard_visual(&mut self) {
+        let Some((lo, hi)) = self.visual_range() else { self.discard_current(); return };
+        let items = self.visible_items();
+        let batch: Vec<CursorItem> = (lo..=hi)
+            .filter_map(|i| items.get(i).cloned())
+            .filter(|item| matches!(item, CursorItem::File(..) | CursorItem::Hunk(..) | CursorItem::DiffLine(..)))
+            .collect();
+        if batch.is_empty() { self.visual_anchor = None; return; }
+        let n = batch.len();
+        let prompt = format!("Discard {} item(s)? (y or n)", n);
+        self.visual_anchor = None;
+        self.confirm = Some(Confirm {
+            kind: ConfirmKind::DiscardBatch(batch),
+            section: 0, file: 0, hunk: None,
+            prompt,
+        });
     }
 
     pub fn unstage_current(&mut self) -> Result<()> {
@@ -294,6 +466,13 @@ impl App {
                     let path = self.sections[si].files[fi].entry.path.clone();
                     let hunk = self.sections[si].files[fi].entry.hunks[hi].clone();
                     repo::unstage_hunk(&path, &hunk)?;
+                }
+            }
+            Some(CursorItem::DiffLine(si, fi, hi, li)) => {
+                if self.sections[si].kind == SectionKind::Staged {
+                    let path = self.sections[si].files[fi].entry.path.clone();
+                    let hunk = self.sections[si].files[fi].entry.hunks[hi].clone();
+                    repo::unstage_lines(&path, &hunk, &[li])?;
                 }
             }
             _ => {}
@@ -468,6 +647,52 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         }
                     }
 
+                    KeyAction::StashBoth => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        app.message = Some(repo::stash_push(&flags).unwrap_or_else(|e| format!("{:#}", e)));
+                        app.refresh()?;
+                    }
+
+                    KeyAction::StashIndex => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        app.message = Some(repo::stash_push_staged(&flags).unwrap_or_else(|e| format!("{:#}", e)));
+                        app.refresh()?;
+                    }
+
+                    KeyAction::StashKeepIndex => {
+                        let flags = app.transient.take().map(|t| t.flags_vec()).unwrap_or_default();
+                        app.message = Some(repo::stash_push_keep_index(&flags).unwrap_or_else(|e| format!("{:#}", e)));
+                        app.refresh()?;
+                    }
+
+                    KeyAction::StashPop => {
+                        app.transient = None;
+                        app.message = Some(repo::stash_pop().unwrap_or_else(|e| format!("{:#}", e)));
+                        app.refresh()?;
+                    }
+
+                    KeyAction::StashApply => {
+                        app.transient = None;
+                        app.message = Some(repo::stash_apply().unwrap_or_else(|e| format!("{:#}", e)));
+                        app.refresh()?;
+                    }
+
+                    KeyAction::StashDrop => {
+                        app.transient = None;
+                        app.message = Some(repo::stash_drop().unwrap_or_else(|e| format!("{:#}", e)));
+                        app.refresh()?;
+                    }
+
+                    KeyAction::StashList => {
+                        app.transient = None;
+                        app.message = Some(repo::stash_list().unwrap_or_else(|e| format!("{:#}", e)));
+                    }
+
+                    KeyAction::StashShow => {
+                        app.transient = None;
+                        app.message = Some(repo::stash_show().unwrap_or_else(|e| format!("{:#}", e)));
+                    }
+
                     KeyAction::Continue => {}
                 }
             }
@@ -606,9 +831,11 @@ mod tests {
         app.cursor = 1; // on the file
         app.toggle_collapse();
         let items = app.visible_items();
-        // Section + File + 2 Hunks visible immediately (hunks open by default)
+        // Section + File + Hunk0 + 2 DiffLines + Hunk1 + 2 DiffLines
         assert!(matches!(items[2], CursorItem::Hunk(0, 0, 0)));
-        assert!(matches!(items[3], CursorItem::Hunk(0, 0, 1)));
+        assert!(matches!(items[3], CursorItem::DiffLine(0, 0, 0, 0)));
+        assert!(matches!(items[4], CursorItem::DiffLine(0, 0, 0, 1)));
+        assert!(matches!(items[5], CursorItem::Hunk(0, 0, 1)));
     }
 
     #[test]

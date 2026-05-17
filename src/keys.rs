@@ -25,6 +25,14 @@ pub enum KeyAction {
     PushToUpstream,
     PullFromPushRemote,
     PullFromUpstream,
+    StashBoth,
+    StashIndex,
+    StashKeepIndex,
+    StashPop,
+    StashApply,
+    StashDrop,
+    StashList,
+    StashShow,
 }
 
 pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
@@ -71,6 +79,14 @@ pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
             (TransientKind::Push,   KeyCode::Char('u')) => KeyAction::PushToUpstream,
             (TransientKind::Pull,   KeyCode::Char('p')) => KeyAction::PullFromPushRemote,
             (TransientKind::Pull,   KeyCode::Char('u')) => KeyAction::PullFromUpstream,
+            (TransientKind::Stash,  KeyCode::Char('z')) | (TransientKind::Stash, KeyCode::Char('P')) => KeyAction::StashBoth,
+            (TransientKind::Stash,  KeyCode::Char('i')) => KeyAction::StashIndex,
+            (TransientKind::Stash,  KeyCode::Char('x')) => KeyAction::StashKeepIndex,
+            (TransientKind::Stash,  KeyCode::Char('p')) => KeyAction::StashPop,
+            (TransientKind::Stash,  KeyCode::Char('a')) => KeyAction::StashApply,
+            (TransientKind::Stash,  KeyCode::Char('k')) => KeyAction::StashDrop,
+            (TransientKind::Stash,  KeyCode::Char('l')) => KeyAction::StashList,
+            (TransientKind::Stash,  KeyCode::Char('v')) => KeyAction::StashShow,
             (_, KeyCode::Char('q')) | (_, KeyCode::Esc) => {
                 app.transient = None;
                 KeyAction::Continue
@@ -80,14 +96,62 @@ pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
     }
 
     Ok(match (key.modifiers, key.code) {
-        (_, KeyCode::Char('q')) | (_, KeyCode::Esc) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => KeyAction::Quit,
+        (_, KeyCode::Char('q')) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => KeyAction::Quit,
+        (_, KeyCode::Esc) => {
+            if app.visual_anchor.is_some() {
+                app.visual_anchor = None;
+                KeyAction::Continue
+            } else {
+                KeyAction::Quit
+            }
+        }
         (_, KeyCode::Char('j')) | (_, KeyCode::Down) => { app.move_down(); KeyAction::Continue }
         (_, KeyCode::Char('k')) | (_, KeyCode::Up)   => { app.move_up();   KeyAction::Continue }
-        (_, KeyCode::Tab)                             => { app.toggle_collapse(); KeyAction::Continue }
-        (_, KeyCode::Char('s')) => { attempt(app, |a| a.stage_current());   KeyAction::Continue }
-        (_, KeyCode::Char('u')) => { attempt(app, |a| a.unstage_current()); KeyAction::Continue }
+        (_, KeyCode::Tab) => {
+            if app.visual_anchor.is_none() { app.toggle_collapse(); }
+            KeyAction::Continue
+        }
+        (_, KeyCode::Char('v')) => {
+            if app.visual_anchor.is_some() {
+                app.visual_anchor = None;
+            } else {
+                app.visual_anchor = Some(app.cursor);
+            }
+            KeyAction::Continue
+        }
+        (_, KeyCode::Char('s')) => {
+            if app.visual_anchor.is_some() {
+                attempt(app, |a| a.stage_visual());
+            } else {
+                attempt(app, |a| a.stage_current());
+            }
+            KeyAction::Continue
+        }
+        (_, KeyCode::Char('u')) => {
+            if app.visual_anchor.is_some() {
+                attempt(app, |a| a.unstage_visual());
+            } else {
+                attempt(app, |a| a.unstage_current());
+            }
+            KeyAction::Continue
+        }
+        (_, KeyCode::Char('x')) => {
+            if app.visual_anchor.is_some() {
+                app.discard_visual();
+            } else {
+                app.discard_current();
+            }
+            KeyAction::Continue
+        }
+        (_, KeyCode::Char('z')) => {
+            if app.visual_anchor.is_some() {
+                attempt(app, |a| a.stash_visual());
+            } else {
+                app.transient = Some(Transient::stash());
+            }
+            KeyAction::Continue
+        }
         (_, KeyCode::Char('g')) => { attempt(app, |a| a.refresh());         KeyAction::Continue }
-        (_, KeyCode::Char('x')) => { app.discard_current(); KeyAction::Continue }
         (_, KeyCode::Char('c')) => { app.transient = Some(Transient::commit()); KeyAction::Continue }
         (_, KeyCode::Char('f')) => { app.transient = Some(Transient::fetch()); KeyAction::Continue }
         (_, KeyCode::Char('p')) | (_, KeyCode::Char('P')) => { app.transient = Some(Transient::push());  KeyAction::Continue }
