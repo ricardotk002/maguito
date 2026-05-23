@@ -196,6 +196,21 @@ impl App {
 
     pub fn discard_current(&mut self) {
         match self.current_item() {
+            Some(CursorItem::Section(si)) => {
+                let n = self.sections[si].files.len();
+                if n == 0 { return; }
+                let batch: Vec<CursorItem> = (0..n).map(|fi| CursorItem::File(si, fi)).collect();
+                let prompt = match self.sections[si].kind {
+                    SectionKind::Untracked  => format!("Trash {} untracked file(s)? (y or n)", n),
+                    SectionKind::Staged     => format!("Discard staged changes in {} file(s)? (y or n)", n),
+                    SectionKind::Unstaged   => format!("Discard unstaged changes in {} file(s)? (y or n)", n),
+                };
+                self.confirm = Some(Confirm {
+                    kind: ConfirmKind::DiscardBatch(batch),
+                    section: si, file: 0, hunk: None,
+                    prompt,
+                });
+            }
             Some(CursorItem::File(si, fi)) => {
                 let section = &self.sections[si];
                 let path = section.files[fi].entry.path.clone();
