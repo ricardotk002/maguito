@@ -5,9 +5,9 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::io;
+use std::{io, usize};
 
-use crate::git::repo::{self, CommitInfo, FileEntry, SectionKind};
+use crate::git::repo::{self, CommitInfo, FileEntry, SectionKind, StashInfo};
 use crate::transient::Transient;
 
 pub enum ConfirmKind {
@@ -30,6 +30,8 @@ pub struct App {
     pub sections: Vec<Section>,
     pub commits: Vec<CommitInfo>,
     pub commits_collapsed: bool,
+    pub stashes: Vec<StashInfo>,
+    pub stashes_collapsed: bool,
     pub cursor: usize,
     pub visual_anchor: Option<usize>,
     pub transient: Option<Transient>,
@@ -57,6 +59,8 @@ pub enum CursorItem {
     Hunk(usize, usize, usize),
     DiffLine(usize, usize, usize, usize), // si, fi, hi, li
     CommitHeader,
+    StashHeader,
+    Stash(usize),
     Commit(usize),
 }
 
@@ -85,6 +89,8 @@ impl App {
             sections,
             commits: status.commits,
             commits_collapsed: false,
+            stashes: status.stashes,
+            stashes_collapsed: false,
             cursor: 0,
             visual_anchor: None,
             transient: None,
@@ -146,6 +152,16 @@ impl App {
                 }
             }
         }
+
+        if !self.stashes.is_empty() {
+            items.push(CursorItem::StashHeader);
+            if !self.stashes_collapsed {
+                for (i, _) in self.stashes.iter().enumerate() {
+                    items.push(CursorItem::Stash(i));
+                }
+            }
+        }
+
         if !self.commits.is_empty() {
             items.push(CursorItem::CommitHeader);
             if !self.commits_collapsed {
@@ -812,6 +828,7 @@ mod tests {
             branch: "main".into(),
             sections,
             commits: vec![],
+            stashes: vec![],
         })
     }
 

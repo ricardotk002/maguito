@@ -61,10 +61,16 @@ pub struct CommitInfo {
     pub message: String,
 }
 
+pub struct StashInfo {
+    pub sha: String,
+    pub message: String,
+}
+
 pub struct RepoStatus {
     pub branch: String,
     pub sections: Vec<(SectionKind, Vec<FileEntry>)>,
     pub commits: Vec<CommitInfo>,
+    pub stashes: Vec<StashInfo>,
 }
 
 #[derive(Debug)]
@@ -234,6 +240,7 @@ pub fn load_from(path: &Path) -> Result<RepoStatus> {
         branch: String::new(),
         sections: Vec::new(),
         commits: Vec::new(),
+        stashes: Vec::new(),
     };
 
     result.branch = match repo.head() {
@@ -270,6 +277,8 @@ pub fn load_from(path: &Path) -> Result<RepoStatus> {
     }
 
     result.commits = load_recent_commits(&repo, 10).unwrap_or_default();
+
+    result.stashes = load_recent_stashes().unwrap_or_default();
 
     Ok(result)
 }
@@ -368,6 +377,19 @@ fn load_recent_commits(repo: &Repository, count: usize) -> Result<Vec<CommitInfo
         });
     }
     Ok(commits)
+}
+
+fn load_recent_stashes() -> Result<Vec<StashInfo>> {
+    let mut stashes: Vec<StashInfo> = Vec::new();
+    let mut repo = Repository::discover(".")?;
+    let _ = repo.stash_foreach(|_: usize, message: &str, oid: &git2::Oid| {
+        stashes.push(StashInfo {
+            sha: format!("{:.7}", oid),
+            message: message.to_string(),
+        });
+        return true; 
+    });
+    Ok(stashes)
 }
 
 pub fn head_message() -> Result<String> {

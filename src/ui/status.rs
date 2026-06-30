@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Clear, List, ListItem, ListState, Paragraph},
 };
 
-use crate::app::{App, CursorItem};
+use crate::{app::{App, CursorItem}};
 use crate::git::repo::SectionKind;
 
 const KIND_WIDTH: usize = 10; // "new file  " — widest label + padding
@@ -108,6 +108,24 @@ pub fn render(frame: &mut Frame, app: &App) {
                     "Recent commits",
                     Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
                 )).style(vbg)));
+            }
+
+            CursorItem::StashHeader => {
+                list_items.push(ListItem::new(Line::from("")));
+                cursor_map.last_mut().map(|v| *v += 1);
+                list_items.push(ListItem::new(Line::from(Span::styled(
+                    "Stashes",
+                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                )).style(vbg)));
+            }
+
+            CursorItem::Stash(i) => {
+                let s= &app.stashes[*i];
+                list_items.push(ListItem::new(Line::from(vec![
+                    Span::styled(format!("stash@{{{i}}}"), Style::default().fg(Color::Yellow)),
+                    Span::raw(" "),
+                    Span::raw(s.message.clone()),
+                ]).style(vbg)));
             }
 
             CursorItem::Commit(i) => {
