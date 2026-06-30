@@ -206,6 +206,9 @@ impl App {
             Some(CursorItem::CommitHeader) => {
                 self.commits_collapsed = !self.commits_collapsed;
             }
+            Some(CursorItem::StashHeader) => {
+                self.stashes_collapsed = !self.stashes_collapsed;
+            }
             _ => {}
         }
     }

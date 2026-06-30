@@ -111,10 +111,11 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
 
             CursorItem::StashHeader => {
+                let c = app.stashes.iter().count();
                 list_items.push(ListItem::new(Line::from("")));
                 cursor_map.last_mut().map(|v| *v += 1);
                 list_items.push(ListItem::new(Line::from(Span::styled(
-                    "Stashes",
+                    format!("Stashes ({})", c),
                     Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
                 )).style(vbg)));
             }
@@ -122,7 +123,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             CursorItem::Stash(i) => {
                 let s= &app.stashes[*i];
                 list_items.push(ListItem::new(Line::from(vec![
-                    Span::styled(format!("stash@{{{i}}}"), Style::default().fg(Color::Yellow)),
+                    Span::styled(format!("stash@{{{}}}", i), Style::default().fg(Color::Yellow)),
                     Span::raw(" "),
                     Span::raw(s.message.clone()),
                 ]).style(vbg)));
