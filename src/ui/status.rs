@@ -111,7 +111,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
 
             CursorItem::StashHeader => {
-                let c = app.stashes.iter().count();
+                let c = app.stashes.len();
                 list_items.push(ListItem::new(Line::from("")));
                 cursor_map.last_mut().map(|v| *v += 1);
                 list_items.push(ListItem::new(Line::from(Span::styled(

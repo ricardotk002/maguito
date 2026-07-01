@@ -370,6 +370,17 @@ impl App {
         self.refresh()
     }
 
+    pub fn apply_stash_current(&mut self) -> Result<()> {
+        match self.current_item() {
+            Some(CursorItem::Stash(i)) => {
+                let s = format!("stash@{{{}}}", i);
+                repo::stash_apply(&[&s])?;
+            },
+            _ => { return Ok(()) }
+        }
+        self.refresh()
+    }
+
     pub fn visual_range(&self) -> Option<(usize, usize)> {
         self.visual_anchor.map(|anchor| {
             (anchor.min(self.cursor), anchor.max(self.cursor))
@@ -707,7 +718,7 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
 
                     KeyAction::StashApply => {
                         app.transient = None;
-                        app.message = Some(repo::stash_apply().unwrap_or_else(|e| format!("{:#}", e)));
+                        app.message = Some(repo::stash_apply(&[]).unwrap_or_else(|e| format!("{:#}", e)));
                         app.refresh()?;
                     }
 

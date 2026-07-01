@@ -152,8 +152,8 @@ pub fn stash_pop() -> Result<String> {
     git_output(&["stash", "pop"], &[], &[])
 }
 
-pub fn stash_apply() -> Result<String> {
-    git_output(&["stash", "apply"], &[], &[])
+pub fn stash_apply(args: &[&str]) -> Result<String> {
+    git_output(&["stash", "apply"], &[], args)
 }
 
 pub fn stash_drop() -> Result<String> {

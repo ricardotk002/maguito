@@ -151,6 +151,10 @@ pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
             }
             KeyAction::Continue
         }
+        (_, KeyCode::Char('a')) => {
+            attempt(app, |a| a.apply_stash_current());
+            KeyAction::Continue
+        }
         (_, KeyCode::Char('g')) => { attempt(app, |a| a.refresh());         KeyAction::Continue }
         (_, KeyCode::Char('c')) => { app.transient = Some(Transient::commit()); KeyAction::Continue }
         (_, KeyCode::Char('f')) => { app.transient = Some(Transient::fetch()); KeyAction::Continue }
