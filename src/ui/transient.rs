@@ -26,6 +26,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         TransientKind::Push   => (simple_lines("Push to", PUSH_FLAGS, PUSH_ACTIONS, transient), 10u16),
         TransientKind::Pull   => (simple_lines("Pull from", PULL_FLAGS, PULL_ACTIONS, transient), 9u16),
         TransientKind::Stash  => (stash_lines(transient), 20u16),
+        TransientKind::Navigate => (vec![], 0),
     };
 
     let area = bottom_rect(frame.area(), height);

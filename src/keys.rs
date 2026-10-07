@@ -38,6 +38,15 @@ pub enum KeyAction {
 pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
     app.message = None;
 
+    if let Some(TransientKind::Navigate) = app.transient.as_ref().map(|t| t.kind) {
+        app.transient = None;
+        return Ok(match key.code {
+            KeyCode::Char('g') => { app.move_to_top(); KeyAction::Continue },
+            KeyCode::Char('r') => { attempt(app, |a| a.refresh()); KeyAction::Continue }
+            _ => KeyAction::Continue
+        });
+    }
+
     if app.confirm.is_some() {
         return Ok(match key.code {
             KeyCode::Char('y') => KeyAction::ConfirmYes,
@@ -155,7 +164,7 @@ pub fn handle(app: &mut App, key: KeyEvent) -> Result<KeyAction> {
             attempt(app, |a| a.apply_stash_current());
             KeyAction::Continue
         }
-        (_, KeyCode::Char('g')) => { attempt(app, |a| a.refresh());         KeyAction::Continue }
+        (_, KeyCode::Char('g')) => { app.transient = Some(Transient::navigate()); KeyAction::Continue }
         (_, KeyCode::Char('c')) => { app.transient = Some(Transient::commit()); KeyAction::Continue }
         (_, KeyCode::Char('f')) => { app.transient = Some(Transient::fetch()); KeyAction::Continue }
         (_, KeyCode::Char('p')) | (_, KeyCode::Char('P')) => { app.transient = Some(Transient::push());  KeyAction::Continue }

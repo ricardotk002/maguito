@@ -104,6 +104,7 @@ pub const STASH_TRANSFORM: &[ActionDef] = &[
 
 #[derive(Copy, Clone)]
 pub enum TransientKind {
+    Navigate,
     Commit,
     Fetch,
     Push,
@@ -118,6 +119,9 @@ pub struct Transient {
 }
 
 impl Transient {
+    pub fn navigate() -> Self {
+        Self { kind: TransientKind::Navigate, active_flags: HashSet::new(), awaiting_flag: false }
+    }
     pub fn commit() -> Self {
         Self { kind: TransientKind::Commit, active_flags: HashSet::new(), awaiting_flag: false }
     }
@@ -156,6 +160,7 @@ impl Transient {
 
     fn flag_defs(&self) -> &'static [FlagDef] {
         match self.kind {
+            TransientKind::Navigate => &[],
             TransientKind::Commit => COMMIT_FLAGS,
             TransientKind::Fetch  => FETCH_FLAGS,
             TransientKind::Push   => PUSH_FLAGS,

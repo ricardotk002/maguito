@@ -181,6 +181,10 @@ impl App {
         self.visible_items().into_iter().nth(self.cursor)
     }
 
+    pub fn move_to_top(&mut self) {
+        self.cursor = 0;
+    }
+
     pub fn move_up(&mut self) {
         if self.cursor > 0 { self.cursor -= 1; }
     }
